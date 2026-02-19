@@ -304,7 +304,7 @@ export default function ChatbotModal({ asPage = false }: ChatbotModalProps) {
         }
         return updated;
       });
-    } catch (err) {
+    } catch {
       const withReply = [
         ...newMessages,
         {

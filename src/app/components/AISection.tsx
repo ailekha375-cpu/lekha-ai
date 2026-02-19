@@ -118,7 +118,7 @@ export default function AISection() {
                   </div>
                   <div className="bg-gray-100 rounded-2xl px-4 py-3 max-w-xs">
                     <p className="text-black text-sm">
-                      "I'd like to create a wedding invitation with a rustic theme..."
+                      {`"I'd like to create a wedding invitation with a rustic theme..."`}
                     </p>
                   </div>
                 </div>
@@ -126,7 +126,7 @@ export default function AISection() {
                 <div className="flex items-center space-x-3 justify-end">
                   <div className="bg-gradient-to-r from-gray-300 to-gray-400 rounded-2xl px-4 py-3 max-w-xs">
                     <p className="text-black text-sm">
-                      "Perfect! I've created 3 rustic wedding invitation designs for you to choose from."
+                      {`"Perfect! I've created 3 rustic wedding invitation designs for you to choose from."`}
                     </p>
                   </div>
                   <div className="w-10 h-10 bg-gradient-to-r from-gray-400 to-gray-300 rounded-full flex items-center justify-center">

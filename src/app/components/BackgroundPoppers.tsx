@@ -40,7 +40,7 @@ export default function BackgroundPoppers() {
   return (
     <div className="fixed inset-0 pointer-events-none z-0">
       {poppers.map((popper, i) => {
-        const { isBubble, size, left, delay, duration, color, rotate, drift } = popper;
+        const { isBubble, size, left, delay, duration, color, rotate } = popper;
         return isBubble ? (
           <span
             key={i}

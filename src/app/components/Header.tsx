@@ -80,8 +80,8 @@ export default function Header() {
       setPassword('');
       setConfirmPassword('');
       router.push('/success');
-    } catch (err: any) {
-      setError(err.message || 'Authentication failed');
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'Authentication failed');
     }
   }
 
