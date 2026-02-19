@@ -19,7 +19,7 @@ export default function Header() {
   const [error, setError] = useState('');
   const dropdownRef = useRef<HTMLDivElement>(null);
   const profileDropdownRef = useRef<HTMLDivElement>(null);
-  const user = useAuth();
+  const { user } = useAuth();
   const router = useRouter();
 
   // Password validation rules

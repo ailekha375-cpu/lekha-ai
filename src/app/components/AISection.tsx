@@ -7,7 +7,7 @@ import { useAuth } from '../lib/useAuth';
 export default function AISection() {
   const router = useRouter();
   const { setShowModal } = useModal();
-  const user = useAuth();
+  const { user } = useAuth();
 
   const handleTryAI = () => {
     if (user) {

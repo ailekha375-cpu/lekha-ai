@@ -38,6 +38,39 @@ function getChatTitle(messages: Message[]): string {
   return text.length > 28 ? text.slice(0, 28) + '…' : text;
 }
 
+const CHAT_STORAGE_KEY = 'lekha-chat-state';
+
+function loadChatFromStorage(): { chatHistory: ChatSession[]; currentChat: Message[]; activeChatId: string | null } | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    const raw = localStorage.getItem(CHAT_STORAGE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as { chatHistory?: ChatSession[]; currentChat?: Message[]; activeChatId?: string | null };
+    if (parsed?.chatHistory && Array.isArray(parsed.chatHistory) && parsed?.currentChat && Array.isArray(parsed.currentChat)) {
+      return {
+        chatHistory: parsed.chatHistory,
+        currentChat: parsed.currentChat,
+        activeChatId: parsed.activeChatId ?? null,
+      };
+    }
+  } catch {
+    // ignore parse errors
+  }
+  return null;
+}
+
+function saveChatToStorage(chatHistory: ChatSession[], currentChat: Message[], activeChatId: string | null) {
+  if (typeof window === 'undefined') return;
+  try {
+    localStorage.setItem(
+      CHAT_STORAGE_KEY,
+      JSON.stringify({ chatHistory, currentChat, activeChatId })
+    );
+  } catch {
+    // ignore quota / storage errors
+  }
+}
+
 function formatSessionDate(createdAt: number): string {
   return new Date(createdAt).toLocaleString(undefined, {
     day: 'numeric',
@@ -105,10 +138,19 @@ type ChatbotModalProps = { asPage?: boolean };
 export default function ChatbotModal({ asPage = false }: ChatbotModalProps) {
   const router = useRouter();
   const { showChatModal, setShowChatModal } = useModal();
-  const user = useAuth();
-  const [chatHistory, setChatHistory] = useState<ChatSession[]>([]);
-  const [currentChat, setCurrentChat] = useState<Message[]>([WELCOME_MESSAGE]);
-  const [activeChatId, setActiveChatId] = useState<string | null>(null);
+  const { user, loading: authLoading } = useAuth();
+  const [chatHistory, setChatHistory] = useState<ChatSession[]>(() => {
+    const stored = loadChatFromStorage();
+    return stored?.chatHistory ?? [];
+  });
+  const [currentChat, setCurrentChat] = useState<Message[]>(() => {
+    const stored = loadChatFromStorage();
+    return (stored?.currentChat?.length ? stored.currentChat : null) ?? [WELCOME_MESSAGE];
+  });
+  const [activeChatId, setActiveChatId] = useState<string | null>(() => {
+    const stored = loadChatFromStorage();
+    return stored?.activeChatId ?? null;
+  });
   const [input, setInput] = useState('');
   const [isTyping, setIsTyping] = useState(false);
   const [hasSlidIn, setHasSlidIn] = useState(false);
@@ -139,12 +181,21 @@ export default function ChatbotModal({ asPage = false }: ChatbotModalProps) {
   }, [currentChat, isTyping]);
 
   useEffect(() => {
-    if ((showChatModal || asPage) && user) {
+    saveChatToStorage(chatHistory, currentChat, activeChatId);
+  }, [chatHistory, currentChat, activeChatId]);
+
+  useEffect(() => {
+    if (!(showChatModal || asPage)) return;
+    if (authLoading) return; // wait for auth to resolve before clearing or loading
+    if (user) {
       loadSessions();
-    } else if ((showChatModal || asPage) && !user) {
+    } else {
       setChatHistory([]);
+      setCurrentChat([WELCOME_MESSAGE]);
+      setActiveChatId(null);
+      saveChatToStorage([], [WELCOME_MESSAGE], null);
     }
-  }, [showChatModal, asPage, user]);
+  }, [showChatModal, asPage, user, authLoading]);
 
   const loadSessions = async () => {
     if (!user) return;
