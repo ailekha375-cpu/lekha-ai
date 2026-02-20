@@ -139,24 +139,25 @@ export default function ChatbotModal({ asPage = false }: ChatbotModalProps) {
   const router = useRouter();
   const { showChatModal, setShowChatModal } = useModal();
   const { user, loading: authLoading } = useAuth();
-  const [chatHistory, setChatHistory] = useState<ChatSession[]>(() => {
-    const stored = loadChatFromStorage();
-    return stored?.chatHistory ?? [];
-  });
-  const [currentChat, setCurrentChat] = useState<Message[]>(() => {
-    const stored = loadChatFromStorage();
-    return (stored?.currentChat?.length ? stored.currentChat : null) ?? [WELCOME_MESSAGE];
-  });
-  const [activeChatId, setActiveChatId] = useState<string | null>(() => {
-    const stored = loadChatFromStorage();
-    return stored?.activeChatId ?? null;
-  });
+  const [chatHistory, setChatHistory] = useState<ChatSession[]>([]);
+  const [currentChat, setCurrentChat] = useState<Message[]>([WELCOME_MESSAGE]);
+  const [activeChatId, setActiveChatId] = useState<string | null>(null);
   const [input, setInput] = useState('');
   const [isTyping, setIsTyping] = useState(false);
   const [hasSlidIn, setHasSlidIn] = useState(false);
   const [lightboxImage, setLightboxImage] = useState<string | null>(null);
   const [lightboxZoom, setLightboxZoom] = useState(1);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const skipNextPersistRef = useRef(false);
+
+  useEffect(() => {
+    const stored = loadChatFromStorage();
+    if (stored?.chatHistory?.length || stored?.currentChat?.length) {
+      setChatHistory(stored.chatHistory ?? []);
+      setCurrentChat(stored.currentChat?.length ? stored.currentChat : [WELCOME_MESSAGE]);
+      setActiveChatId(stored.activeChatId ?? null);
+    }
+  }, []);
 
   useEffect(() => {
     if (asPage) {
@@ -181,6 +182,10 @@ export default function ChatbotModal({ asPage = false }: ChatbotModalProps) {
   }, [currentChat, isTyping]);
 
   useEffect(() => {
+    if (skipNextPersistRef.current) {
+      skipNextPersistRef.current = false;
+      return;
+    }
     saveChatToStorage(chatHistory, currentChat, activeChatId);
   }, [chatHistory, currentChat, activeChatId]);
 
@@ -207,15 +212,19 @@ export default function ChatbotModal({ asPage = false }: ChatbotModalProps) {
       if (!res.ok) return;
       const sessions = await res.json();
       if (Array.isArray(sessions)) {
-        setChatHistory(
-          sessions.map((s: { conversationId: string; title: string; createdAt: string; updatedAt: string }) => ({
+        skipNextPersistRef.current = true;
+        setChatHistory((prev) => {
+          const backendSessions = sessions.map((s: { conversationId: string; title: string; createdAt: string; updatedAt: string }) => ({
             id: s.conversationId,
             title: s.title || 'Chat',
             messages: [],
             createdAt: new Date(s.createdAt || s.updatedAt).getTime(),
             conversationId: s.conversationId,
-          }))
-        );
+          }));
+          const backendIds = new Set(backendSessions.map((s) => s.id));
+          const localOnly = prev.filter((s) => s.conversationId == null && !backendIds.has(s.id));
+          return [...backendSessions, ...localOnly];
+        });
       }
     } catch (err) {
       console.error('Failed to load sessions:', err);
@@ -385,9 +394,10 @@ export default function ChatbotModal({ asPage = false }: ChatbotModalProps) {
 
   const startNewChat = () => {
     const hasContent = currentChat.length > 1 || (currentChat.length === 1 && currentChat[0].role === 'user');
-    if (hasContent && currentChat.some((m) => m.role === 'user')) {
+    const alreadyInHistory = activeChatId != null && chatHistory.some((s) => s.id === activeChatId);
+    if (hasContent && currentChat.some((m) => m.role === 'user') && !alreadyInHistory) {
       setChatHistory((prev) => {
-        const existing = activeChatId ? prev.find((s) => s.id === activeChatId) : undefined;
+        const existing = prev.find((s) => s.id === activeChatId);
         return [
           ...prev,
           { id: `chat-${Date.now()}`, title: getChatTitle(currentChat), messages: [...currentChat], createdAt: Date.now(), conversationId: existing?.conversationId ?? null },
