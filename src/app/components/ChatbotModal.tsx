@@ -400,10 +400,26 @@ export default function ChatbotModal({ asPage = false }: ChatbotModalProps) {
 
   const deleteSession = async (sessionId: string, e: React.MouseEvent) => {
     e.stopPropagation();
+    const session = chatHistory.find((s) => s.id === sessionId);
+    const isBackendSession = session?.conversationId != null;
+
+    const removeFromState = () => {
+      setChatHistory((prev) => prev.filter((s) => s.id !== sessionId));
+      if (activeChatId === sessionId) {
+        setCurrentChat([WELCOME_MESSAGE]);
+        setActiveChatId(null);
+      }
+    };
+
+    if (!isBackendSession) {
+      removeFromState();
+      return;
+    }
+
     if (!user) return;
     try {
       const idToken = await user.getIdToken();
-      const res = await fetch(`/api/sessions/${sessionId}`, {
+      const res = await fetch(`/api/sessions/${session!.conversationId}`, {
         method: 'DELETE',
         headers: { Authorization: `Bearer ${idToken}` },
       });
@@ -412,11 +428,7 @@ export default function ChatbotModal({ asPage = false }: ChatbotModalProps) {
         console.error('Delete failed:', err?.error || res.status);
         return;
       }
-      setChatHistory((prev) => prev.filter((s) => s.id !== sessionId));
-      if (activeChatId === sessionId) {
-        setCurrentChat([WELCOME_MESSAGE]);
-        setActiveChatId(null);
-      }
+      removeFromState();
     } catch (err) {
       console.error('Delete failed:', err);
     }
