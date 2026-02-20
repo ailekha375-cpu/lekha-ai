@@ -17,8 +17,8 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
     return NextResponse.json({ error: 'Missing conversationId' }, { status: 400 });
   }
 
-  const baseUrl = AZURE_FUNCTION_URL.replace(/\/api\/chat$/, '');
-  const sessionUrl = `${baseUrl}/api/sessions/${conversationId}`;
+  const { origin, search } = new URL(AZURE_FUNCTION_URL);
+  const sessionUrl = `${origin}/api/sessions/${conversationId}${search}`;
 
   const bearerToken = request.headers.get('Authorization');
   const headers: Record<string, string> = {};
@@ -61,8 +61,8 @@ export async function DELETE(request: NextRequest, { params }: { params: Promise
     return NextResponse.json({ error: 'Missing conversationId' }, { status: 400 });
   }
 
-  const baseUrl = AZURE_FUNCTION_URL.replace(/\/api\/chat$/, '');
-  const sessionUrl = `${baseUrl}/api/sessions/${conversationId}`;
+  const { origin, search } = new URL(AZURE_FUNCTION_URL);
+  const sessionUrl = `${origin}/api/sessions/${conversationId}${search}`;
 
   const bearerToken = request.headers.get('Authorization');
   const headers: Record<string, string> = {};

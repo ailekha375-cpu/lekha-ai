@@ -12,8 +12,8 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: 'Server misconfiguration: AZURE_FUNCTION_URL not set' }, { status: 500 });
   }
 
-  const baseUrl = AZURE_FUNCTION_URL.replace(/\/api\/chat$/, '');
-  const sessionsUrl = `${baseUrl}/api/sessions`;
+  const { origin, search } = new URL(AZURE_FUNCTION_URL);
+  const sessionsUrl = `${origin}/api/sessions${search}`;
 
   const bearerToken = request.headers.get('Authorization');
   const headers: Record<string, string> = {};
