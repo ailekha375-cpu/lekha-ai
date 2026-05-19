@@ -1,24 +1,7 @@
-import type { Metadata } from "next";
-import { Inter, Geist, Geist_Mono } from "next/font/google";
-import "./globals.css";
-import { ModalProvider } from "./components/ModalContext";
-import ClientModals from "./components/ClientModals";
-
-const inter = Inter({
-  variable: "--font-inter",
-  subsets: ["latin"],
-  display: "swap",
-});
-
-const geistSans = Geist({
-  variable: "--font-geist-sans",
-  subsets: ["latin"],
-});
-
-const geistMono = Geist_Mono({
-  variable: "--font-geist-mono",
-  subsets: ["latin"],
-});
+import type { Metadata } from 'next';
+import './globals.css';
+import { ModalProvider } from './components/ModalContext';
+import ClientModals from './components/ClientModals';
 
 export const metadata: Metadata = {
   title: "Lekha - Beautiful AI-Powered Invitations",
@@ -32,12 +15,12 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en">
-      <body
-        className={`${inter.variable} ${geistSans.variable} ${geistMono.variable} antialiased`}
-      >
+      <body className="antialiased">
         <ModalProvider>
+          <div className="relative z-10">
+            {children}
+          </div>
           <ClientModals />
-          {children}
         </ModalProvider>
       </body>
     </html>

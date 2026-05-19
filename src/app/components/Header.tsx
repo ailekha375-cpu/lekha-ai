@@ -1,15 +1,36 @@
 'use client';
 
-import { useState, useRef, useEffect } from 'react';
-import { useAuth } from '../lib/useAuth';
-import { signIn, signUp, logOut } from '../lib/auth';
+import Link from 'next/link';
+import { useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
+
+import { logOut, signIn, signUp } from '../lib/auth';
+import { useAuth } from '../lib/useAuth';
 import { useModal } from './ModalContext';
+
+const SERVICE_LINKS = [
+  { href: '/chat', label: 'Design with AI', description: 'Generate invite art and open the composer.' },
+  { href: '/events', label: 'Create Events', description: 'Save event details and set RSVP deadlines.' },
+  { href: '/events', label: 'Invite Guests', description: 'Add guest records and create personal RSVP links.' },
+  { href: '/responses', label: 'Track RSVPs', description: 'Open RSVP dashboards for your events and review responses.' },
+];
+
+function RuleIndicator({ active }: { active: boolean }) {
+  return (
+    <span
+      className={`mt-0.5 flex h-5 w-5 items-center justify-center rounded-full text-xs font-bold ${
+        active ? 'bg-emerald-100 text-emerald-700' : 'bg-rose-100 text-rose-700'
+      }`}
+      aria-hidden
+    >
+      {active ? 'OK' : 'NO'}
+    </span>
+  );
+}
 
 export default function Header() {
   const [isServicesDropdownOpen, setIsServicesDropdownOpen] = useState(false);
   const [isProfileDropdownOpen, setIsProfileDropdownOpen] = useState(false);
-  const { showModal, setShowModal } = useModal();
   const [isSignup, setIsSignup] = useState(false);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -19,10 +40,10 @@ export default function Header() {
   const [error, setError] = useState('');
   const dropdownRef = useRef<HTMLDivElement>(null);
   const profileDropdownRef = useRef<HTMLDivElement>(null);
-  const user = useAuth();
+  const { showModal, setShowModal } = useModal();
+  const { user } = useAuth();
   const router = useRouter();
 
-  // Password validation rules
   const passwordRules = {
     length: password.length >= 8,
     uppercase: /[A-Z]/.test(password),
@@ -31,40 +52,34 @@ export default function Header() {
     special: /[!@#$%^&*(),.?":{}|<>]/.test(password),
   };
 
-  const isPasswordValid = Object.values(passwordRules).every(rule => rule);
+  const isPasswordValid = Object.values(passwordRules).every(Boolean);
   const doPasswordsMatch = password === confirmPassword;
 
   useEffect(() => {
     function handleClick(event: MouseEvent) {
-      if (
-        dropdownRef.current &&
-        !dropdownRef.current.contains(event.target as Node)
-      ) {
+      if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
         setIsServicesDropdownOpen(false);
       }
-      if (
-        profileDropdownRef.current &&
-        !profileDropdownRef.current.contains(event.target as Node)
-      ) {
+      if (profileDropdownRef.current && !profileDropdownRef.current.contains(event.target as Node)) {
         setIsProfileDropdownOpen(false);
       }
     }
+
     document.addEventListener('mousedown', handleClick);
     return () => document.removeEventListener('mousedown', handleClick);
   }, []);
 
-  async function handleAuth(e: React.FormEvent) {
-    e.preventDefault();
+  async function handleAuth(event: React.FormEvent) {
+    event.preventDefault();
     setError('');
-    
-    // Validate password for signup
+
     if (isSignup) {
       if (!isPasswordValid) {
-        setError('Password does not meet all requirements');
+        setError('Password does not meet all requirements.');
         return;
       }
       if (!doPasswordsMatch) {
-        setError('Passwords do not match');
+        setError('Passwords do not match.');
         return;
       }
     }
@@ -75,273 +90,277 @@ export default function Header() {
       } else {
         await signIn(email, password);
       }
+
       setShowModal(false);
-      setEmail('');
-      setPassword('');
-      setConfirmPassword('');
-      router.push('/success');
-    } catch (err: any) {
-      setError(err.message || 'Authentication failed');
+      resetForm();
+      router.push('/');
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'Authentication failed');
     }
   }
 
-  const resetForm = () => {
+  function resetForm() {
     setEmail('');
     setPassword('');
     setConfirmPassword('');
     setError('');
     setShowPassword(false);
     setShowConfirmPassword(false);
-  };
+  }
 
-  const handleLogout = async () => {
+  async function handleLogout() {
     await logOut();
     router.push('/');
-  };
+  }
 
   return (
-    <header className="w-full py-8 px-8 flex items-center justify-between" style={{ background: 'transparent' }}>
-      {/* App Name */}
-      <div className="flex-shrink-0">
-        <h1
-          className="text-3xl font-bold text-black select-none"
-          style={{ fontFamily: 'Kaivalya, serif' }}
-        >
-          Lekha
-        </h1>
-      </div>
-      {/* Navigation Links */}
-      <nav className="flex items-center space-x-8 relative z-10">
-        {/* Services Dropdown */}
-        <div className="relative" ref={dropdownRef}>
-          <button
-            onClick={() => setIsServicesDropdownOpen((v) => !v)}
-            className="flex items-center space-x-1 text-black text-lg font-medium hover:text-gray-700 focus:outline-none transition-colors duration-200"
-          >
-            <span>Services</span>
-            <svg
-              className={`w-4 h-4 transition-transform duration-200 ${isServicesDropdownOpen ? 'rotate-180' : ''}`}
-              fill="none"
-              stroke="currentColor"
-              viewBox="0 0 24 24"
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-                d="M19 9l-7 7-7-7"
-              />
-            </svg>
-          </button>
-          {isServicesDropdownOpen && (
-            <div className="absolute right-0 mt-2 w-48 bg-white/95 backdrop-blur-sm rounded-lg shadow-lg py-2 border border-gray-200">
-              <a
-                href="#"
-                className="block px-4 py-2 text-base text-black hover:bg-gray-100 hover:text-gray-800 transition-colors duration-200 font-medium"
-              >
-                Send Invites
-              </a>
-              <a
-                href="#"
-                className="block px-4 py-2 text-base text-black hover:bg-gray-100 hover:text-gray-800 transition-colors duration-200 font-medium"
-              >
-                Track RSVPs
-              </a>
-              <a
-                href="#"
-                className="block px-4 py-2 text-base text-black hover:bg-gray-100 hover:text-gray-800 transition-colors duration-200 font-medium"
-              >
-                Use AI
-              </a>
+    <header className="sticky top-0 z-30 w-full px-4 py-5 sm:px-6 lg:px-8">
+      <div className="mx-auto flex max-w-7xl items-center justify-between rounded-full border border-white/60 bg-[#fcfaf7]/88 px-4 py-3 shadow-[0_16px_40px_rgba(45,24,16,0.10)] backdrop-blur md:px-6">
+        <div className="flex items-center gap-4">
+          <Link href="/" className="flex items-center gap-3">
+            <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-[linear-gradient(135deg,#f4eadb,#d2b48c)] text-lg font-bold text-[#2d1810] shadow-sm">
+              L
             </div>
-          )}
+            <div>
+              <p className="text-2xl font-bold text-[#2d1810]" style={{ fontFamily: 'Kaivalya, serif' }}>
+                Lekha
+              </p>
+              <p className="hidden text-xs uppercase tracking-[0.28em] text-[#8a6d54] sm:block">
+                Invite Studio
+              </p>
+            </div>
+          </Link>
         </div>
-        {/* Auth/Profile Button */}
-        {user ? (
-          <div className="relative" ref={profileDropdownRef}>
+
+        <nav className="flex items-center gap-4 sm:gap-6">
+          <div className="relative hidden sm:block" ref={dropdownRef}>
             <button
-              onClick={() => setIsProfileDropdownOpen((v) => !v)}
-              className="ml-4 w-10 h-10 rounded-full bg-gradient-to-r from-gray-300 to-gray-400 flex items-center justify-center font-bold text-black text-lg shadow-lg"
-              title={user.email || 'Profile'}
+              type="button"
+              onClick={() => setIsServicesDropdownOpen((open) => !open)}
+              className="flex items-center gap-2 rounded-full px-4 py-2 text-sm font-semibold text-[#2d1810] transition hover:bg-[#f5eee5]"
             >
-              {user.email?.charAt(0).toUpperCase() || 'U'}
+              Services
+              <svg
+                className={`h-4 w-4 transition-transform duration-200 ${isServicesDropdownOpen ? 'rotate-180' : ''}`}
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+              </svg>
             </button>
-            {isProfileDropdownOpen && (
-              <div className="absolute right-0 mt-2 w-48 bg-white/95 backdrop-blur-sm rounded-lg shadow-lg py-2 border border-gray-200">
-                <a href="#" className="block px-4 py-2 text-base text-black hover:bg-gray-100 font-medium">My Invitations</a>
-                <a href="#" className="block px-4 py-2 text-base text-black hover:bg-gray-100 font-medium">My Guests</a>
-                <a href="#" className="block px-4 py-2 text-base text-black hover:bg-gray-100 font-medium">My Profile</a>
-                <button onClick={handleLogout} className="block w-full text-left px-4 py-2 text-base text-red-600 hover:bg-gray-100 font-medium">Log Out</button>
+
+            {isServicesDropdownOpen && (
+              <div className="absolute right-0 mt-3 w-[320px] overflow-hidden rounded-[24px] border border-[#eadfd2] bg-white/96 p-2 shadow-[0_20px_50px_rgba(45,24,16,0.14)] backdrop-blur">
+                {SERVICE_LINKS.map((item) => (
+                  <Link
+                    key={item.label}
+                    href={item.href}
+                    className="block rounded-[18px] px-4 py-3 transition hover:bg-[#f8f2ea]"
+                    onClick={() => setIsServicesDropdownOpen(false)}
+                  >
+                    <p className="text-sm font-semibold text-[#2d1810]">{item.label}</p>
+                    <p className="mt-1 text-sm leading-6 text-[#6b5b4f]">{item.description}</p>
+                  </Link>
+                ))}
               </div>
             )}
           </div>
-        ) : (
-          <button
-            className="ml-4 bg-gradient-to-r from-gray-300 to-gray-400 text-black px-6 py-3 rounded-full font-semibold text-base hover:from-gray-400 hover:to-gray-500 transition-all duration-200 transform hover:scale-105 shadow-lg"
-            onClick={() => setShowModal(true)}
+
+          <Link
+            href="/chat"
+            className="hidden rounded-full border border-[#ddcfbe] px-4 py-2 text-sm font-semibold text-[#6b5b4f] transition hover:bg-[#f7efe4] md:inline-flex"
           >
-            Login / Signup
-          </button>
-        )}
-      </nav>
-      {/* Modal for Login/Signup */}
-      {showModal && (
-        <div className="fixed inset-0 flex items-center justify-center bg-black/40 z-50">
-          <div className="bg-white rounded-xl shadow-2xl p-8 w-full max-w-md relative">
-            <div className="text-center mb-2">
-              <div className="flex flex-col justify-center items-center mt-4" style={{minHeight: '40%'}}>
-                <h3 className="text-5xl font-extrabold text-gray-800 leading-tight" style={{fontFamily: 'Kaivalya, serif', lineHeight: '1.1', minHeight: '3.5rem'}}>
-                  Lekha
-                </h3>
-              </div>
+            AI Studio
+          </Link>
+          <Link
+            href="/events"
+            className="rounded-full bg-[#2d1810] px-4 py-2 text-sm font-semibold text-white transition hover:bg-[#4a2e1d] md:px-5"
+          >
+            Event Hub
+          </Link>
+
+          {user ? (
+            <div className="relative" ref={profileDropdownRef}>
+              <button
+                type="button"
+                onClick={() => setIsProfileDropdownOpen((open) => !open)}
+                className="flex h-11 w-11 items-center justify-center rounded-full bg-[linear-gradient(135deg,#f0e3d3,#d2b48c)] text-base font-bold text-[#2d1810] shadow-sm"
+                title={user.email || 'Profile'}
+              >
+                {user.email?.charAt(0).toUpperCase() || 'U'}
+              </button>
+              {isProfileDropdownOpen && (
+                <div className="absolute right-0 mt-3 w-64 overflow-hidden rounded-[24px] border border-[#eadfd2] bg-white/96 p-2 shadow-[0_20px_50px_rgba(45,24,16,0.14)] backdrop-blur">
+                  <div className="border-b border-[#efe3d7] px-4 py-3">
+                    <p className="text-sm font-semibold text-[#2d1810]">{user.email}</p>
+                    <p className="mt-1 text-xs uppercase tracking-[0.22em] text-[#9a7a56]">Host account</p>
+                  </div>
+                  <Link
+                    href="/events"
+                    className="mt-2 block rounded-[18px] px-4 py-3 text-sm font-medium text-[#2d1810] transition hover:bg-[#f8f2ea]"
+                    onClick={() => setIsProfileDropdownOpen(false)}
+                  >
+                    My events
+                  </Link>
+                  <Link
+                    href="/chat"
+                    className="block rounded-[18px] px-4 py-3 text-sm font-medium text-[#2d1810] transition hover:bg-[#f8f2ea]"
+                    onClick={() => setIsProfileDropdownOpen(false)}
+                  >
+                    AI invite studio
+                  </Link>
+                  <button
+                    type="button"
+                    onClick={handleLogout}
+                    className="mt-1 block w-full rounded-[18px] px-4 py-3 text-left text-sm font-medium text-rose-700 transition hover:bg-rose-50"
+                  >
+                    Log out
+                  </button>
+                </div>
+              )}
             </div>
-            <button 
-              className="absolute top-4 right-4 text-gray-500 hover:text-black text-2xl" 
+          ) : (
+            <button
+              type="button"
+              className="rounded-full border border-[#d7c8b8] bg-white px-4 py-2 text-sm font-semibold text-[#2d1810] transition hover:bg-[#f7efe4]"
+              onClick={() => setShowModal(true)}
+            >
+              Login / Signup
+            </button>
+          )}
+        </nav>
+      </div>
+
+      {showModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#2d1810]/45 px-4 py-6">
+          <div className="relative w-full max-w-lg overflow-hidden rounded-[28px] border border-white/45 bg-[#fcfaf7] shadow-2xl">
+            <div className="border-b border-[#eee2d5] bg-[linear-gradient(135deg,#fffdf9,#f5eee5)] px-7 py-6">
+              <p className="text-xs font-semibold uppercase tracking-[0.28em] text-[#9a7a56]">Welcome to Lekha</p>
+              <h2 className="mt-3 text-3xl font-semibold text-[#2d1810]">
+                {isSignup ? 'Create your host account' : 'Log in to your workspace'}
+              </h2>
+              <p className="mt-2 text-sm leading-6 text-[#6b5b4f]">
+                Save invite drafts, manage guests, and keep every RSVP in one place.
+              </p>
+            </div>
+
+            <button
+              type="button"
+              className="absolute right-5 top-5 rounded-full border border-[#e8dccc] px-3 py-1 text-lg text-[#6b5b4f] transition hover:bg-white"
               onClick={() => {
                 setShowModal(false);
                 resetForm();
               }}
+              aria-label="Close auth dialog"
             >
-              &times;
+              x
             </button>
-            <h2 className="text-2xl font-bold mb-2 text-center">{isSignup ? 'Sign Up' : 'Login'}</h2>
-            <form onSubmit={handleAuth} className="space-y-6">
+
+            <form onSubmit={handleAuth} className="space-y-5 px-7 py-7">
               <div>
-                <label htmlFor="email" className="block text-sm font-medium text-gray-700 mb-1">Email</label>
+                <label htmlFor="email" className="block text-sm font-medium text-[#4f3422]">
+                  Email
+                </label>
                 <input
                   id="email"
                   type="email"
-                  placeholder="xyz@gmail.com"
+                  placeholder="host@example.com"
                   value={email}
-                  onChange={e => setEmail(e.target.value)}
-                  className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-gray-400 focus:border-transparent placeholder-gray-400 text-black"
+                  onChange={(event) => setEmail(event.target.value)}
+                  className="mt-2 w-full rounded-2xl border border-[#ddd1c2] bg-white px-4 py-3 text-black outline-none transition focus:border-[#d2b48c] focus:ring-2 focus:ring-[#d2b48c]/30"
                   required
                 />
               </div>
+
               <div>
-                <label htmlFor="password" className="block text-sm font-medium text-gray-700 mb-2">
-                  {isSignup ? 'Create Password' : 'Password'}
+                <label htmlFor="password" className="block text-sm font-medium text-[#4f3422]">
+                  {isSignup ? 'Create password' : 'Password'}
                 </label>
-                <div className="relative">
+                <div className="relative mt-2">
                   <input
                     id="password"
-                    type={showPassword ? "text" : "password"}
+                    type={showPassword ? 'text' : 'password'}
                     placeholder="Enter your password"
                     value={password}
-                    onChange={e => setPassword(e.target.value)}
-                    className="w-full px-4 py-3 pr-12 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-gray-400 focus:border-transparent placeholder-gray-400 text-black"
+                    onChange={(event) => setPassword(event.target.value)}
+                    className="w-full rounded-2xl border border-[#ddd1c2] bg-white px-4 py-3 pr-12 text-black outline-none transition focus:border-[#d2b48c] focus:ring-2 focus:ring-[#d2b48c]/30"
                     required
                   />
                   <button
                     type="button"
-                    onClick={() => setShowPassword(!showPassword)}
-                    className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-500 hover:text-gray-700"
+                    onClick={() => setShowPassword((current) => !current)}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-[#7c6a5c] transition hover:text-[#2d1810]"
                   >
-                    {!showPassword ? (
-                      // Open eye (show password action)
-                      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
-                      </svg>
-                    ) : (
-                      // Crossed eye (hide password action)
-                      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.878 9.878L3 3m6.878 6.878L21 21" />
-                      </svg>
-                    )}
+                    {showPassword ? 'Hide' : 'Show'}
                   </button>
                 </div>
               </div>
-              
+
               {isSignup && (
                 <div>
-                  <label htmlFor="confirmPassword" className="block text-sm font-medium text-gray-700 mb-2">
-                    Re-enter Password
+                  <label htmlFor="confirmPassword" className="block text-sm font-medium text-[#4f3422]">
+                    Confirm password
                   </label>
-                  <div className="relative">
+                  <div className="relative mt-2">
                     <input
                       id="confirmPassword"
-                      type={showConfirmPassword ? "text" : "password"}
+                      type={showConfirmPassword ? 'text' : 'password'}
                       placeholder="Re-enter your password"
                       value={confirmPassword}
-                      onChange={e => setConfirmPassword(e.target.value)}
-                      className="w-full px-4 py-3 pr-12 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-gray-400 focus:border-transparent placeholder-gray-400 text-black"
+                      onChange={(event) => setConfirmPassword(event.target.value)}
+                      className="w-full rounded-2xl border border-[#ddd1c2] bg-white px-4 py-3 pr-12 text-black outline-none transition focus:border-[#d2b48c] focus:ring-2 focus:ring-[#d2b48c]/30"
                       required
                     />
                     <button
                       type="button"
-                      onClick={() => setShowConfirmPassword(!showConfirmPassword)}
-                      className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-500 hover:text-gray-700"
+                      onClick={() => setShowConfirmPassword((current) => !current)}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-[#7c6a5c] transition hover:text-[#2d1810]"
                     >
-                      {!showConfirmPassword ? (
-                        // Open eye (show password action)
-                        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
-                        </svg>
-                      ) : (
-                        // Crossed eye (hide password action)
-                        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.878 9.878L3 3m6.878 6.878L21 21" />
-                        </svg>
-                      )}
+                      {showConfirmPassword ? 'Hide' : 'Show'}
                     </button>
                   </div>
                 </div>
               )}
 
-              {/* Password validation rules for signup */}
               {isSignup && password && (
-                <div className="bg-gray-50 p-4 rounded-lg">
-                  <h4 className="text-sm font-medium text-gray-700 mb-2">Password Requirements:</h4>
-                  <div className="space-y-1 text-sm">
-                    <div className={`flex items-center ${passwordRules.length ? 'text-green-600' : 'text-red-600'}`}>
-                      <span className="mr-2">{passwordRules.length ? '✓' : '✗'}</span>
-                      At least 8 characters
-                    </div>
-                    <div className={`flex items-center ${passwordRules.uppercase ? 'text-green-600' : 'text-red-600'}`}>
-                      <span className="mr-2">{passwordRules.uppercase ? '✓' : '✗'}</span>
-                      At least 1 uppercase letter
-                    </div>
-                    <div className={`flex items-center ${passwordRules.lowercase ? 'text-green-600' : 'text-red-600'}`}>
-                      <span className="mr-2">{passwordRules.lowercase ? '✓' : '✗'}</span>
-                      At least 1 lowercase letter
-                    </div>
-                    <div className={`flex items-center ${passwordRules.digit ? 'text-green-600' : 'text-red-600'}`}>
-                      <span className="mr-2">{passwordRules.digit ? '✓' : '✗'}</span>
-                      At least 1 digit
-                    </div>
-                    <div className={`flex items-center ${passwordRules.special ? 'text-green-600' : 'text-red-600'}`}>
-                      <span className="mr-2">{passwordRules.special ? '✓' : '✗'}</span>
-                      At least 1 special character
-                    </div>
+                <div className="rounded-3xl border border-[#eee2d5] bg-[#f8f3eb] p-4">
+                  <h4 className="text-sm font-semibold text-[#4f3422]">Password requirements</h4>
+                  <div className="mt-3 space-y-2 text-sm text-[#5b4635]">
+                    <div className="flex items-start gap-3"><RuleIndicator active={passwordRules.length} /><span>At least 8 characters</span></div>
+                    <div className="flex items-start gap-3"><RuleIndicator active={passwordRules.uppercase} /><span>At least 1 uppercase letter</span></div>
+                    <div className="flex items-start gap-3"><RuleIndicator active={passwordRules.lowercase} /><span>At least 1 lowercase letter</span></div>
+                    <div className="flex items-start gap-3"><RuleIndicator active={passwordRules.digit} /><span>At least 1 number</span></div>
+                    <div className="flex items-start gap-3"><RuleIndicator active={passwordRules.special} /><span>At least 1 special character</span></div>
                   </div>
                   {confirmPassword && (
-                    <div className={`mt-2 text-sm ${doPasswordsMatch ? 'text-green-600' : 'text-red-600'}`}>
-                      {doPasswordsMatch ? '✓ Passwords match' : '✗ Passwords do not match'}
-                    </div>
+                    <p className={`mt-3 text-sm font-medium ${doPasswordsMatch ? 'text-emerald-700' : 'text-rose-700'}`}>
+                      {doPasswordsMatch ? 'Passwords match.' : 'Passwords do not match.'}
+                    </p>
                   )}
                 </div>
               )}
 
-              {error && <div className="text-red-600 text-sm text-center bg-red-50 p-3 rounded-lg">{error}</div>}
-              
+              {error && <div className="rounded-2xl bg-rose-50 px-4 py-3 text-sm text-rose-700">{error}</div>}
+
               <button
                 type="submit"
-                className="w-full bg-gradient-to-r from-gray-300 to-gray-400 text-black py-3 rounded-lg font-semibold hover:from-gray-400 hover:to-gray-500 transition-all duration-200 shadow-lg"
+                className="w-full rounded-full bg-[#2d1810] py-3 text-sm font-semibold text-white transition hover:bg-[#4a2e1d]"
               >
-                {isSignup ? 'Sign Up' : 'Login'}
+                {isSignup ? 'Create account' : 'Continue'}
               </button>
             </form>
-            <div className="mt-6 text-center">
+
+            <div className="border-t border-[#eee2d5] px-7 py-5 text-center">
               <button
-                className="text-blue-600 hover:underline text-sm"
+                type="button"
+                className="text-sm font-medium text-[#8a6d54] transition hover:text-[#2d1810]"
                 onClick={() => {
-                  setIsSignup(v => !v);
+                  setIsSignup((current) => !current);
                   resetForm();
                 }}
               >
-                {isSignup ? 'Already have an account? Login' : "Don't have an account? Sign Up"}
+                {isSignup ? 'Already have an account? Log in' : "Don't have an account yet? Sign up"}
               </button>
             </div>
           </div>
@@ -349,4 +368,4 @@ export default function Header() {
       )}
     </header>
   );
-} 
+}

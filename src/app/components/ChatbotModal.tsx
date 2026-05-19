@@ -1,16 +1,26 @@
 'use client';
 
-import { useState, useRef, useEffect } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { useModal } from './ModalContext';
 import { useAuth } from '../lib/useAuth';
 import ChatPanelPoppers from './ChatPanelPoppers';
+import ImageActionModal from './ImageActionModal';
+import InviteEditorModal from './InviteEditorModal';
+import SaveToEventModal from './SaveToEventModal';
+import type { EventRecord } from '../lib/eventTypes';
+import {
+  linkChatToEvent,
+  saveEmailDraftToEvent,
+  saveInviteAssetToEvent,
+} from '../lib/eventCampaignApi';
 
 type Message = {
   id: string;
   role: 'user' | 'assistant';
   content: string;
-  /** When set, assistant message shows this base64 image (e.g. from Azure image API). */
   imageBase64?: string;
+  imageUrl?: string;
 };
 
 export type ChatSession = {
@@ -18,53 +28,351 @@ export type ChatSession = {
   title: string;
   messages: Message[];
   createdAt: number;
-  /** From backend (Cosmos DB); null for new chat, then set from first response to resume. */
   conversationId?: string | null;
 };
 
 const WELCOME_MESSAGE: Message = {
   id: 'welcome',
   role: 'assistant',
-  content: "Hi! I'm your invitation assistant. Describe your event—type, theme, and preferences—and I'll help create designs for you.",
+  content:
+    "Hi! I'm your invitation assistant. Describe your event and I'll help create designs for you. While the backend is off, you can also try the demo template below and open the invite editor right away.",
+  imageUrl: '/wedding.svg',
 };
 
 function getChatTitle(messages: Message[]): string {
-  const firstUser = messages.find((m) => m.role === 'user');
+  const firstUser = messages.find((message) => message.role === 'user');
   if (!firstUser) return 'New chat';
   const text = firstUser.content.trim();
-  return text.length > 28 ? text.slice(0, 28) + '…' : text;
+  return text.length > 28 ? `${text.slice(0, 28)}...` : text;
 }
 
-export default function ChatbotModal() {
+const CHAT_STORAGE_KEY = 'lekha-chat-state';
+
+function loadChatFromStorage(): {
+  chatHistory: ChatSession[];
+  currentChat: Message[];
+  activeChatId: string | null;
+} | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    const raw = localStorage.getItem(CHAT_STORAGE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as {
+      chatHistory?: ChatSession[];
+      currentChat?: Message[];
+      activeChatId?: string | null;
+    };
+    if (parsed?.chatHistory && Array.isArray(parsed.chatHistory) && parsed?.currentChat && Array.isArray(parsed.currentChat)) {
+      return {
+        chatHistory: parsed.chatHistory,
+        currentChat: parsed.currentChat,
+        activeChatId: parsed.activeChatId ?? null,
+      };
+    }
+  } catch {
+    // ignore parse errors
+  }
+  return null;
+}
+
+function saveChatToStorage(chatHistory: ChatSession[], currentChat: Message[], activeChatId: string | null) {
+  if (typeof window === 'undefined') return;
+  try {
+    localStorage.setItem(
+      CHAT_STORAGE_KEY,
+      JSON.stringify({ chatHistory, currentChat, activeChatId })
+    );
+  } catch {
+    // ignore quota / storage errors
+  }
+}
+
+function formatSessionDate(createdAt: number): string {
+  return new Date(createdAt).toLocaleString(undefined, {
+    day: 'numeric',
+    month: 'short',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+}
+
+function formatEventMeta(value?: string | null) {
+  if (!value) return 'Not set';
+  try {
+    return new Date(value).toLocaleString();
+  } catch {
+    return value;
+  }
+}
+
+function ImageMessage({
+  imageUrl,
+  imageBase64,
+  getImageDataUrl,
+  onOpenActions,
+}: {
+  imageUrl?: string;
+  imageBase64?: string;
+  getImageDataUrl: (b64: string) => string;
+  onOpenActions: (urlOrB64: string) => void;
+}) {
+  const [error, setError] = useState(false);
+  const src = imageBase64
+    ? getImageDataUrl(imageBase64)
+    : imageUrl
+      ? imageUrl.startsWith('http')
+        ? `/api/image?url=${encodeURIComponent(imageUrl)}`
+        : imageUrl
+      : '';
+
+  if (!src) return null;
+
+  if (error && (imageUrl || imageBase64)) {
+    return (
+      <div className="rounded-lg bg-white p-3 space-y-1">
+        <p className="text-sm text-gray-600">Image could not be loaded.</p>
+        {imageUrl && imageUrl.startsWith('http') && (
+          <a
+            href={imageUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-sm underline"
+          >
+            Open in new tab
+          </a>
+        )}
+      </div>
+    );
+  }
+
+  return (
+    <button
+      type="button"
+      onClick={() => onOpenActions(imageUrl || imageBase64!)}
+      className="block w-full max-w-full max-h-64 overflow-hidden rounded-lg text-left focus:outline-none focus:ring-2 focus:ring-[#d2b48c] focus:ring-offset-1"
+      title="Open template actions"
+    >
+      <img
+        src={src}
+        alt="Generated design"
+        className="h-auto max-h-64 w-full max-w-full cursor-pointer rounded-lg bg-white object-contain hover:opacity-95"
+        onError={() => setError(true)}
+      />
+    </button>
+  );
+}
+
+type ChatbotModalProps = { asPage?: boolean };
+
+type PendingEventSave =
+  | {
+      type: 'template';
+      imageSrc: string;
+    }
+  | {
+      type: 'finalInvite';
+      imageSrc: string;
+    }
+  | {
+      type: 'emailDraft';
+      content: string;
+      messageId: string;
+    };
+
+export default function ChatbotModal({ asPage = false }: ChatbotModalProps) {
+  const router = useRouter();
+  const searchParams = useSearchParams();
   const { showChatModal, setShowChatModal } = useModal();
-  const user = useAuth();
+  const { user, loading: authLoading } = useAuth();
   const [chatHistory, setChatHistory] = useState<ChatSession[]>([]);
   const [currentChat, setCurrentChat] = useState<Message[]>([WELCOME_MESSAGE]);
   const [activeChatId, setActiveChatId] = useState<string | null>(null);
   const [input, setInput] = useState('');
   const [isTyping, setIsTyping] = useState(false);
   const [hasSlidIn, setHasSlidIn] = useState(false);
-  const [lightboxImage, setLightboxImage] = useState<string | null>(null);
-  const [lightboxZoom, setLightboxZoom] = useState(1);
+  const [actionImage, setActionImage] = useState<string | null>(null);
+  const [editorImage, setEditorImage] = useState<string | null>(null);
+  const [sessionNotice, setSessionNotice] = useState('');
+  const [events, setEvents] = useState<EventRecord[]>([]);
+  const [selectedEventId, setSelectedEventId] = useState<string | null>(null);
+  const [pendingEventSave, setPendingEventSave] = useState<PendingEventSave | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const skipNextPersistRef = useRef(false);
+
+  const selectedEvent = useMemo(
+    () => events.find((event) => event.id === selectedEventId) ?? null,
+    [events, selectedEventId]
+  );
+
+  const latestGeneratedImage = useMemo(
+    () =>
+      [...currentChat]
+        .reverse()
+        .find((message) => message.role === 'assistant' && (message.imageUrl || message.imageBase64)) ?? null,
+    [currentChat]
+  );
+
+  const latestTextResult = useMemo(
+    () =>
+      [...currentChat]
+        .reverse()
+        .find(
+          (message) =>
+            message.role === 'assistant' &&
+            !message.imageUrl &&
+            !message.imageBase64 &&
+            message.id !== 'welcome'
+        ) ?? null,
+    [currentChat]
+  );
 
   useEffect(() => {
+    const stored = loadChatFromStorage();
+    if (stored?.chatHistory?.length || stored?.currentChat?.length) {
+      setChatHistory(stored.chatHistory ?? []);
+      setCurrentChat(stored.currentChat?.length ? stored.currentChat : [WELCOME_MESSAGE]);
+      setActiveChatId(stored.activeChatId ?? null);
+    }
+  }, []);
+
+  useEffect(() => {
+    const eventId = searchParams.get('eventId');
+    if (eventId) {
+      setSelectedEventId(eventId);
+    }
+  }, [searchParams]);
+
+  useEffect(() => {
+    if (asPage) {
+      setHasSlidIn(true);
+      return;
+    }
     if (showChatModal) {
       setHasSlidIn(false);
-      const t = requestAnimationFrame(() => {
+      const frame = requestAnimationFrame(() => {
         requestAnimationFrame(() => setHasSlidIn(true));
       });
-      return () => cancelAnimationFrame(t);
+      return () => cancelAnimationFrame(frame);
     }
-  }, [showChatModal]);
-
-  const scrollToBottom = () => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  };
+  }, [showChatModal, asPage]);
 
   useEffect(() => {
-    scrollToBottom();
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [currentChat, isTyping]);
+
+  useEffect(() => {
+    if (skipNextPersistRef.current) {
+      skipNextPersistRef.current = false;
+      return;
+    }
+    saveChatToStorage(chatHistory, currentChat, activeChatId);
+  }, [chatHistory, currentChat, activeChatId]);
+
+  useEffect(() => {
+    if (!(showChatModal || asPage)) return;
+    if (authLoading) return;
+    if (user) {
+      loadSessions();
+      loadEvents();
+    } else {
+      setChatHistory([]);
+      setCurrentChat([WELCOME_MESSAGE]);
+      setActiveChatId(null);
+      setEvents([]);
+      setSelectedEventId(null);
+      saveChatToStorage([], [WELCOME_MESSAGE], null);
+    }
+  }, [showChatModal, asPage, user, authLoading]);
+
+  const loadSessions = async () => {
+    if (!user) return;
+    try {
+      const idToken = await user.getIdToken();
+      const res = await fetch('/api/sessions', {
+        headers: { Authorization: `Bearer ${idToken}` },
+      });
+      if (!res.ok) return;
+      const sessions = await res.json();
+      if (Array.isArray(sessions)) {
+        skipNextPersistRef.current = true;
+        setChatHistory((prev) => {
+          const backendSessions = sessions.map((session: { conversationId: string; title: string; createdAt: string; updatedAt: string }) => ({
+            id: session.conversationId,
+            title: session.title || 'Chat',
+            messages: [],
+            createdAt: new Date(session.createdAt || session.updatedAt).getTime(),
+            conversationId: session.conversationId,
+          }));
+          const backendIds = new Set(backendSessions.map((session: ChatSession) => session.id));
+          const localOnly = prev.filter((session) => session.conversationId == null && !backendIds.has(session.id));
+          return [...backendSessions, ...localOnly];
+        });
+      }
+    } catch (err) {
+      console.error('Failed to load sessions:', err);
+      setSessionNotice('We could not refresh your chat history, but your local draft is still available.');
+    }
+  };
+
+  const loadConversationMessages = async (conversationId: string) => {
+    if (!user) return null;
+    try {
+      const idToken = await user.getIdToken();
+      const res = await fetch(`/api/sessions/${conversationId}`, {
+        headers: { Authorization: `Bearer ${idToken}` },
+      });
+      if (!res.ok) return null;
+      const data = await res.json();
+      if (data?.messages && Array.isArray(data.messages)) {
+        const messages: Message[] = data.messages.map((message: { role: string; type: string; content: string }, idx: number) => ({
+          id: `msg-${conversationId}-${idx}`,
+          role: message.role === 'user' ? 'user' : 'assistant',
+          content: message.type === 'image' ? '[Generated image]' : message.content,
+          ...(message.type === 'image' && message.content ? { imageUrl: message.content } : {}),
+        }));
+        return messages;
+      }
+    } catch (err) {
+      console.error('Failed to load conversation:', err);
+    }
+    return null;
+  };
+
+  const loadEvents = async () => {
+    if (!user) return;
+    try {
+      const idToken = await user.getIdToken();
+      const res = await fetch('/api/events', {
+        headers: { Authorization: `Bearer ${idToken}` },
+      });
+      if (!res.ok) return;
+      const data = await res.json();
+      const nextEvents = Array.isArray(data?.events) ? (data.events as EventRecord[]) : [];
+      setEvents(nextEvents);
+      if (!selectedEventId && nextEvents[0]?.id) {
+        setSelectedEventId(nextEvents[0].id);
+      }
+    } catch (err) {
+      console.error('Failed to load events:', err);
+    }
+  };
+
+  const linkActiveConversationToSelectedEvent = async (conversationId?: string | null) => {
+    if (!selectedEventId || !conversationId || !user) return;
+    const session = chatHistory.find((entry) => entry.conversationId === conversationId || entry.id === conversationId);
+    const title = session?.title || getChatTitle(currentChat);
+    try {
+      const idToken = await user.getIdToken();
+      await linkChatToEvent(selectedEventId, idToken, {
+        conversationId,
+        title,
+        updatedAt: new Date().toISOString(),
+      });
+    } catch (err) {
+      console.error('Failed to link chat to event:', err);
+    }
+  };
 
   const handleSend = async () => {
     const text = input.trim();
@@ -85,26 +393,29 @@ export default function ChatbotModal() {
       role: 'user',
       content: text,
     };
+
     const newMessages = [...currentChat, userMsg];
     setCurrentChat(newMessages);
     setInput('');
     setIsTyping(true);
+    setSessionNotice('');
 
     const conversationId = activeChatId
-      ? (chatHistory.find((s) => s.id === activeChatId)?.conversationId ?? null)
+      ? (chatHistory.find((session) => session.id === activeChatId)?.conversationId ?? null)
       : null;
 
     const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+
     try {
-      const idToken = user ? await user.getIdToken() : null;
-      if (idToken) {
-        headers['Authorization'] = `Bearer ${idToken}`;
-      }
+      const idToken = await user.getIdToken();
+      headers.Authorization = `Bearer ${idToken}`;
+
       const res = await fetch('/api/chat', {
         method: 'POST',
         headers,
         body: JSON.stringify({ message: text, conversationId }),
       });
+
       const data = await res.json();
 
       if (!res.ok) {
@@ -121,9 +432,18 @@ export default function ChatbotModal() {
         const newChatId = activeChatId || `chat-${Date.now()}`;
         if (!activeChatId) setActiveChatId(newChatId);
         setChatHistory((prev) => {
-          const rest = prev.filter((c) => c.id !== newChatId);
-          const existing = prev.find((c) => c.id === newChatId);
-          return [...rest, { id: newChatId, title: getChatTitle(withReply), messages: withReply, createdAt: Date.now(), conversationId: existing?.conversationId ?? null }];
+          const rest = prev.filter((session) => session.id !== newChatId);
+          const existing = prev.find((session) => session.id === newChatId);
+          return [
+            ...rest,
+            {
+              id: newChatId,
+              title: getChatTitle(withReply),
+              messages: withReply,
+              createdAt: Date.now(),
+              conversationId: existing?.conversationId ?? null,
+            },
+          ];
         });
         return;
       }
@@ -134,31 +454,51 @@ export default function ChatbotModal() {
           ? data.data
           : typeof data?.content === 'string'
             ? data.content
-            : 'Sorry, I couldn’t process that.';
+            : "Sorry, I couldn't process that.";
+      const imageUrl =
+        responseType === 'image'
+          ? (typeof data?.data === 'string' ? data.data : undefined) ||
+            (typeof (data as { image_url?: string })?.image_url === 'string'
+              ? (data as { image_url: string }).image_url
+              : undefined)
+          : undefined;
       const imageBase64 =
-        responseType === 'image' && typeof data?.data === 'string'
-          ? data.data
-          : typeof data?.imageBase64 === 'string'
-            ? data.imageBase64
+        typeof data?.imageBase64 === 'string'
+          ? data.imageBase64
+          : responseType === 'image' && typeof data?.data === 'string' && !data.data.startsWith('http')
+            ? data.data
             : undefined;
       const conversationIdFromBackend = data?.conversationId != null ? String(data.conversationId) : undefined;
       const assistantMsg: Message = {
         id: `bot-${Date.now()}`,
         role: 'assistant',
-        content,
+        content: responseType === 'image' ? '[Generated image]' : content,
+        ...(imageUrl ? { imageUrl } : {}),
         ...(imageBase64 ? { imageBase64 } : {}),
       };
       const withReply = [...newMessages, assistantMsg];
       setCurrentChat(withReply);
       setIsTyping(false);
-      const newChatId = activeChatId || `chat-${Date.now()}`;
+      const newChatId = activeChatId || conversationIdFromBackend || `chat-${Date.now()}`;
       if (!activeChatId) setActiveChatId(newChatId);
       setChatHistory((prev) => {
-        const rest = prev.filter((c) => c.id !== newChatId);
-        const existing = prev.find((c) => c.id === newChatId);
-        return [...rest, { id: newChatId, title: getChatTitle(withReply), messages: withReply, createdAt: Date.now(), conversationId: conversationIdFromBackend ?? existing?.conversationId ?? null }];
+        const rest = prev.filter((session) => session.id !== newChatId);
+        const existing = prev.find((session) => session.id === newChatId);
+        const updatedSession = {
+          id: newChatId,
+          title: getChatTitle(withReply),
+          messages: withReply,
+          createdAt: Date.now(),
+          conversationId: conversationIdFromBackend ?? existing?.conversationId ?? null,
+        };
+        const updated = [...rest, updatedSession];
+        if (conversationIdFromBackend && !existing) {
+          setTimeout(() => loadSessions(), 500);
+        }
+        return updated;
       });
-    } catch (err) {
+      void linkActiveConversationToSelectedEvent(conversationIdFromBackend ?? conversationId);
+    } catch {
       const withReply = [
         ...newMessages,
         {
@@ -172,263 +512,664 @@ export default function ChatbotModal() {
       const newChatId = activeChatId || `chat-${Date.now()}`;
       if (!activeChatId) setActiveChatId(newChatId);
       setChatHistory((prev) => {
-        const rest = prev.filter((c) => c.id !== newChatId);
-        const existing = prev.find((c) => c.id === newChatId);
-        return [...rest, { id: newChatId, title: getChatTitle(withReply), messages: withReply, createdAt: Date.now(), conversationId: existing?.conversationId ?? null }];
+        const rest = prev.filter((session) => session.id !== newChatId);
+        const existing = prev.find((session) => session.id === newChatId);
+        return [
+          ...rest,
+          {
+            id: newChatId,
+            title: getChatTitle(withReply),
+            messages: withReply,
+            createdAt: Date.now(),
+            conversationId: existing?.conversationId ?? null,
+          },
+        ];
       });
     }
   };
 
-  const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault();
+  const handleKeyDown = (event: React.KeyboardEvent) => {
+    if (event.key === 'Enter' && !event.shiftKey) {
+      event.preventDefault();
       handleSend();
     }
   };
 
   const startNewChat = () => {
-    const hasContent = currentChat.length > 1 || (currentChat.length === 1 && currentChat[0].role === 'user');
-    if (hasContent && currentChat.some((m) => m.role === 'user')) {
+    const hasContent =
+      currentChat.length > 1 || (currentChat.length === 1 && currentChat[0].role === 'user');
+    const alreadyInHistory =
+      activeChatId != null && chatHistory.some((session) => session.id === activeChatId);
+
+    if (hasContent && currentChat.some((message) => message.role === 'user') && !alreadyInHistory) {
       setChatHistory((prev) => {
-        const existing = activeChatId ? prev.find((s) => s.id === activeChatId) : undefined;
+        const existing = prev.find((session) => session.id === activeChatId);
         return [
           ...prev,
-          { id: `chat-${Date.now()}`, title: getChatTitle(currentChat), messages: [...currentChat], createdAt: Date.now(), conversationId: existing?.conversationId ?? null },
+          {
+            id: `chat-${Date.now()}`,
+            title: getChatTitle(currentChat),
+            messages: [...currentChat],
+            createdAt: Date.now(),
+            conversationId: existing?.conversationId ?? null,
+          },
         ];
       });
     }
+
     setCurrentChat([WELCOME_MESSAGE]);
     setActiveChatId(null);
   };
 
-  const openHistoryChat = (session: ChatSession) => {
-    setCurrentChat(session.messages);
+  const deleteSession = async (sessionId: string, event: React.MouseEvent) => {
+    event.stopPropagation();
+    const session = chatHistory.find((chatSession) => chatSession.id === sessionId);
+    const isBackendSession = session?.conversationId != null;
+
+    const removeFromState = () => {
+      setChatHistory((prev) => prev.filter((chatSession) => chatSession.id !== sessionId));
+      if (activeChatId === sessionId) {
+        setCurrentChat([WELCOME_MESSAGE]);
+        setActiveChatId(null);
+      }
+    };
+
+    if (!isBackendSession) {
+      removeFromState();
+      return;
+    }
+
+    if (!user) return;
+
+    removeFromState();
+    setSessionNotice('');
+
+    try {
+      const idToken = await user.getIdToken();
+      const res = await fetch(`/api/sessions/${session!.conversationId}`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${idToken}` },
+      });
+      if (!res.ok) {
+        if (res.status === 404) {
+          return;
+        }
+        const err = await res.json().catch(() => ({}));
+        console.error('Delete failed:', err?.error || res.status);
+        setSessionNotice('That chat was removed here, but the server did not confirm deletion.');
+        return;
+      }
+    } catch (err) {
+      console.error('Delete failed:', err);
+      setSessionNotice('That chat was removed locally. We could not confirm the server delete.');
+    }
+  };
+
+  const openHistoryChat = async (session: ChatSession) => {
     setActiveChatId(session.id);
+    if (session.messages.length > 0) {
+      setCurrentChat(session.messages);
+      return;
+    }
+
+    if (session.conversationId) {
+      const messages = await loadConversationMessages(session.conversationId);
+      if (messages) {
+        setCurrentChat(messages);
+        setChatHistory((prev) =>
+          prev.map((chatSession) => (chatSession.id === session.id ? { ...chatSession, messages } : chatSession))
+        );
+      }
+    }
   };
 
   const goHome = () => {
-    setShowChatModal(false);
+    if (asPage) {
+      router.push('/');
+    } else {
+      setShowChatModal(false);
+    }
   };
 
   const getImageDataUrl = (imageBase64: string) =>
     imageBase64.startsWith('data:') ? imageBase64 : `data:image/png;base64,${imageBase64}`;
 
-  const openLightbox = (imageBase64: string) => {
-    setLightboxImage(getImageDataUrl(imageBase64));
-    setLightboxZoom(1);
+  const normalizeImageSource = (imageUrlOrBase64: string) => {
+    if (imageUrlOrBase64.startsWith('data:')) return imageUrlOrBase64;
+    if (imageUrlOrBase64.startsWith('/')) return imageUrlOrBase64;
+    if (imageUrlOrBase64.startsWith('http')) {
+      return `/api/image?url=${encodeURIComponent(imageUrlOrBase64)}`;
+    }
+    return getImageDataUrl(imageUrlOrBase64);
   };
 
-  const closeLightbox = () => setLightboxImage(null);
+  const openImageActions = (imageUrlOrBase64: string) => {
+    setActionImage(normalizeImageSource(imageUrlOrBase64));
+  };
+
+  const closeImageActions = () => setActionImage(null);
+
+  const openInviteEditor = () => {
+    if (!actionImage) return;
+    setEditorImage(actionImage);
+    setActionImage(null);
+  };
+
+  const openSaveTemplateToEvent = () => {
+    if (!actionImage) return;
+    setPendingEventSave({ type: 'template', imageSrc: actionImage });
+    setActionImage(null);
+  };
+
+  const openSaveEmailToEvent = (message: Message) => {
+    setPendingEventSave({
+      type: 'emailDraft',
+      content: message.content,
+      messageId: message.id,
+    });
+  };
+
+  const handleSaveInviteToEvent = (imageDataUrl: string) => {
+    setPendingEventSave({ type: 'finalInvite', imageSrc: imageDataUrl });
+  };
+
+  const confirmSaveToEvent = async () => {
+    if (!pendingEventSave || !selectedEventId || !user) return;
+
+    const activeConversationId =
+      chatHistory.find((session) => session.id === activeChatId)?.conversationId ?? activeChatId ?? null;
+
+    try {
+      const idToken = await user.getIdToken();
+      if (pendingEventSave.type === 'emailDraft') {
+        await saveEmailDraftToEvent(selectedEventId, idToken, {
+          content: pendingEventSave.content,
+          updatedAt: new Date().toISOString(),
+          sourceConversationId: activeConversationId,
+          sourceMessageId: pendingEventSave.messageId,
+        });
+        if (activeConversationId) {
+          await linkChatToEvent(selectedEventId, idToken, {
+            conversationId: activeConversationId,
+            title: getChatTitle(currentChat),
+            updatedAt: new Date().toISOString(),
+          });
+        }
+        setSessionNotice('Email draft saved to the selected event.');
+      } else {
+        await saveInviteAssetToEvent(selectedEventId, idToken, {
+          src: pendingEventSave.imageSrc,
+          updatedAt: new Date().toISOString(),
+          sourceConversationId: activeConversationId,
+          variant: pendingEventSave.type === 'template' ? 'template' : 'final',
+        });
+        if (activeConversationId) {
+          await linkChatToEvent(selectedEventId, idToken, {
+            conversationId: activeConversationId,
+            title: getChatTitle(currentChat),
+            updatedAt: new Date().toISOString(),
+          });
+        }
+        setSessionNotice(
+          pendingEventSave.type === 'template'
+            ? 'Template saved to the selected event.'
+            : 'Final invite saved to the selected event.'
+        );
+      }
+      setPendingEventSave(null);
+    } catch (err) {
+      console.error('Failed to save to event:', err);
+      setSessionNotice(err instanceof Error ? err.message : 'We could not save that asset to the selected event.');
+    }
+  };
 
   const saveImage = (dataUrl: string) => {
-    const a = document.createElement('a');
-    a.href = dataUrl;
-    a.download = `invite-design-${Date.now()}.png`;
-    a.click();
+    const anchor = document.createElement('a');
+    anchor.href = dataUrl;
+    anchor.download = `invite-design-${Date.now()}.png`;
+    anchor.click();
   };
 
-  if (!showChatModal) return null;
+  if (!asPage && !showChatModal) return null;
 
   return (
     <>
-      {/* Backdrop - warm tint to match app */}
-      <div
-        className="fixed inset-0 z-40 transition-opacity"
-        style={{ backgroundColor: 'rgba(45, 24, 16, 0.2)' }}
-        aria-hidden
-      />
-      {/* Slide-in panel: 80% chat + 20% sidebar - app palette: #f8f9fa, #e5e4e2, #d2b48c, #d3d3d3 */}
-      <div
-        className="fixed inset-y-0 left-0 z-50 w-full flex shadow-2xl transition-transform duration-300 ease-out"
-        style={{ transform: hasSlidIn ? 'translateX(0)' : 'translateX(-100%)' }}
-      >
-        {/* Left 80% - Chat area with twinkling bubbles like homepage */}
+      {!asPage && (
         <div
-          className="w-[80%] flex flex-col min-h-full border-r relative overflow-hidden"
+          className="fixed inset-0 z-40 transition-opacity"
+          style={{ backgroundColor: 'rgba(45, 24, 16, 0.2)' }}
+          aria-hidden
+        />
+      )}
+
+      <div
+        className={`w-full flex ${asPage ? 'min-h-screen' : 'fixed inset-y-0 left-0 z-50 shadow-2xl transition-transform duration-300 ease-out'}`}
+        style={asPage ? undefined : { transform: hasSlidIn ? 'translateX(0)' : 'translateX(-100%)' }}
+      >
+        <div
+          className="relative flex min-h-full w-full flex-col overflow-hidden border-r lg:w-[78%]"
           style={{ borderColor: '#e5e4e2', backgroundColor: '#f8f9fa' }}
         >
           <ChatPanelPoppers />
-          <div className="flex items-center justify-between p-4 flex-shrink-0 border-b relative z-10" style={{ borderColor: '#e5e4e2', backgroundColor: 'rgba(248, 249, 250, 0.9)' }}>
-            <div className="flex items-center space-x-3">
-              <div className="w-3 h-3 rounded-full" style={{ backgroundColor: '#d2b48c' }} />
-              <div className="w-3 h-3 rounded-full" style={{ backgroundColor: '#e5e4e2' }} />
-              <div className="w-3 h-3 rounded-full" style={{ backgroundColor: '#d3d3d3' }} />
+          <div
+            className="relative z-10 flex flex-shrink-0 items-center justify-between border-b p-4"
+            style={{ borderColor: '#e5e4e2', backgroundColor: 'rgba(248, 249, 250, 0.9)' }}
+          >
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-[0.28em] text-[#9a7a56]">
+                AI Invite Studio
+              </p>
+              <h3 className="mt-1 text-lg font-semibold text-black">Create, tweak, and save invitation concepts</h3>
             </div>
-            <h3 className="text-lg font-semibold text-black">AI Invitation Assistant</h3>
-            <div className="w-10" />
+            <div className="flex flex-wrap items-center justify-end gap-2">
+              <div className="hidden rounded-full bg-[#f3ebdf] px-3 py-2 text-xs font-semibold uppercase tracking-[0.18em] text-[#855d3b] sm:block">
+                Demo image fallback enabled
+              </div>
+            </div>
           </div>
 
-          <div className="flex-1 overflow-y-auto p-4 space-y-4 min-h-0 relative z-10">
-            {currentChat.map((msg) =>
-              msg.role === 'user' ? (
-                <div key={msg.id} className="flex items-center space-x-3 justify-end">
+          <div className="relative z-10 min-h-0 flex-1 overflow-y-auto p-4 space-y-4">
+            <div className="rounded-[22px] border border-[#ece2d7] bg-white px-4 py-4 shadow-sm">
+              <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+                <div className="min-w-0">
+                  <p className="text-xs font-semibold uppercase tracking-[0.22em] text-[#9a7a56]">Current event</p>
+                  {selectedEvent ? (
+                    <div className="mt-2 flex flex-wrap items-center gap-2">
+                      <span className="text-sm font-semibold text-[#2d1810]">{selectedEvent.title}</span>
+                      <span className="rounded-full bg-[#f5ecdf] px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-[#855d3b]">
+                        {selectedEvent.status || 'draft'}
+                      </span>
+                      <span className="text-xs text-[#8a6d54]">
+                        RSVP {formatEventMeta(selectedEvent.rsvpDeadline)}
+                      </span>
+                    </div>
+                  ) : (
+                    <p className="mt-2 text-sm text-[#6b5b4f]">Choose an event to save generated assets into one workspace.</p>
+                  )}
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  {events.length > 0 ? (
+                    <select
+                      value={selectedEventId ?? ''}
+                      onChange={(event) => setSelectedEventId(event.target.value || null)}
+                      className="rounded-full border border-[#ddd1c2] bg-[#fffaf4] px-4 py-2 text-sm font-medium text-[#2d1810] outline-none focus:border-[#d2b48c]"
+                    >
+                      <option value="">Select an event</option>
+                      {events.map((event) => (
+                        <option key={event.id} value={event.id}>
+                          {event.title}
+                        </option>
+                      ))}
+                    </select>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => router.push('/events')}
+                      className="rounded-full border border-[#ddd1c2] bg-[#fffaf4] px-4 py-2 text-sm font-medium text-[#2d1810] transition hover:bg-[#f7efe4]"
+                    >
+                      Create event
+                    </button>
+                  )}
+                  {selectedEvent && (
+                    <button
+                      type="button"
+                      onClick={() => router.push(`/events/${selectedEvent.id}`)}
+                      className="rounded-full bg-[#2d1810] px-4 py-2 text-xs font-semibold uppercase tracking-[0.14em] text-white transition hover:bg-[#4a2e1d]"
+                    >
+                      Open event
+                    </button>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            {sessionNotice && (
+              <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+                {sessionNotice}
+              </div>
+            )}
+
+            <div className="rounded-[28px] border border-[#e8ddd1] bg-white px-4 py-5 shadow-sm">
+              <div className="mb-5 flex items-center justify-between gap-3">
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-[0.22em] text-[#9a7a56]">Conversation</p>
+                  <h4 className="mt-2 text-xl font-semibold text-[#2d1810]">Prompt, review, and save outputs</h4>
+                </div>
+                <div className="hidden rounded-full bg-[#f5ecdf] px-3 py-2 text-xs font-semibold uppercase tracking-[0.14em] text-[#855d3b] lg:block">
+                  {latestGeneratedImage ? 'Image ready' : latestTextResult ? 'Draft ready' : 'Start with a prompt'}
+                </div>
+              </div>
+
+            {currentChat.map((message) =>
+              message.role === 'user' ? (
+                <div key={message.id} className="mb-4 flex items-center justify-end space-x-3">
                   <div
-                    className="rounded-2xl px-4 py-3 max-w-[85%]"
+                    className="max-w-[85%] rounded-[22px] px-4 py-3 shadow-sm"
                     style={{ background: 'linear-gradient(135deg, #e5e4e2 0%, #d2b48c 100%)' }}
                   >
-                    <p className="text-black text-sm">{msg.content}</p>
+                    <p className="mb-2 text-xs font-semibold uppercase tracking-[0.14em] text-[#5c4330]">Your prompt</p>
+                    <p className="text-sm text-black">{message.content}</p>
                   </div>
                   <div
-                    className="w-10 h-10 flex-shrink-0 rounded-full flex items-center justify-center"
+                    className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-full"
                     style={{ background: 'linear-gradient(135deg, #d2b48c 0%, #e5e4e2 100%)' }}
                   >
-                    <span className="text-black text-lg">✨</span>
+                    <span className="text-sm font-semibold text-black">You</span>
                   </div>
                 </div>
               ) : (
-                <div key={msg.id} className="flex items-center space-x-3">
+                <div key={message.id} className="mb-4 flex items-start space-x-3">
                   <div
-                    className="w-10 h-10 flex-shrink-0 rounded-full flex items-center justify-center"
+                    className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-full"
                     style={{ background: 'linear-gradient(135deg, #d2b48c 0%, #e5e4e2 100%)' }}
                   >
-                    <span className="text-black text-lg">🤖</span>
+                    <span className="text-sm font-semibold text-black">AI</span>
                   </div>
-                  <div className="rounded-2xl px-4 py-3 max-w-[85%] space-y-2" style={{ backgroundColor: '#e5e4e2' }}>
-                    {msg.imageBase64 && (
-                      <button
-                        type="button"
-                        onClick={() => openLightbox(msg.imageBase64!)}
-                        className="block rounded-lg overflow-hidden max-w-full max-h-64 focus:outline-none focus:ring-2 focus:ring-offset-1 focus:ring-[#d2b48c]"
-                        title="Click to zoom and save"
-                      >
-                        <img
-                          src={getImageDataUrl(msg.imageBase64)}
-                          alt="Generated design"
-                          className="rounded-lg max-w-full h-auto max-h-64 object-contain cursor-pointer hover:opacity-95"
+                  <div
+                    className={`max-w-[90%] space-y-3 rounded-[24px] border px-4 py-4 shadow-sm ${
+                      message.imageUrl || message.imageBase64
+                        ? 'border-[#e6d7c6] bg-[#fff9f1]'
+                        : 'border-[#e6ddd2] bg-[#f7f2eb]'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between gap-3">
+                      <div>
+                        <p className="text-xs font-semibold uppercase tracking-[0.16em] text-[#9a7a56]">
+                          {message.imageUrl || message.imageBase64 ? 'Image result' : message.id === 'welcome' ? 'Welcome' : 'Text result'}
+                        </p>
+                      </div>
+                      {message.id !== 'welcome' && (
+                        <span className="rounded-full bg-white px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-[#855d3b]">
+                          Assistant
+                        </span>
+                      )}
+                    </div>
+
+                    {(message.imageUrl || message.imageBase64) ? (
+                      <div className="space-y-3">
+                        <ImageMessage
+                          imageUrl={message.imageUrl}
+                          imageBase64={message.imageBase64}
+                          getImageDataUrl={getImageDataUrl}
+                          onOpenActions={openImageActions}
                         />
-                      </button>
+                        <div className="rounded-[18px] bg-white px-4 py-3">
+                          <p className="text-sm font-semibold text-[#2d1810]">What you can do next</p>
+                          <p className="mt-1 text-sm leading-6 text-[#6b5b4f]">
+                            Download the raw template, open the invite editor, or save it into the current event workspace.
+                          </p>
+                        </div>
+                        <div className="flex flex-wrap gap-2">
+                          <button
+                            type="button"
+                            onClick={() => openImageActions(message.imageUrl || message.imageBase64!)}
+                            className="rounded-full bg-[#2d1810] px-3 py-2 text-xs font-semibold uppercase tracking-[0.14em] text-white transition hover:bg-[#4a2e1d]"
+                          >
+                            Open asset actions
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      <>
+                        {message.content && <p className="text-sm leading-7 text-black">{message.content}</p>}
+                        {message.id !== 'welcome' && (
+                          <div className="rounded-[18px] bg-white px-4 py-3">
+                            <p className="text-sm font-semibold text-[#2d1810]">Use this draft</p>
+                            <p className="mt-1 text-sm leading-6 text-[#6b5b4f]">
+                              Save it to the selected event as outgoing email copy, or copy it directly.
+                            </p>
+                          </div>
+                        )}
+                      </>
                     )}
-                    <p className="text-black text-sm">{msg.content}</p>
+                    {!message.imageUrl &&
+                      !message.imageBase64 &&
+                      message.id !== 'welcome' && (
+                        <div className="mt-3 flex flex-wrap gap-2">
+                          <button
+                            type="button"
+                            onClick={() => openSaveEmailToEvent(message)}
+                            className="rounded-full bg-[#2d1810] px-3 py-2 text-xs font-semibold uppercase tracking-[0.14em] text-white transition hover:bg-[#4a2e1d]"
+                          >
+                            Save email to event
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => navigator.clipboard.writeText(message.content)}
+                            className="rounded-full border border-[#ddd1c2] px-3 py-2 text-xs font-semibold text-[#5c4330] transition hover:bg-[#f7efe4]"
+                          >
+                            Copy text
+                          </button>
+                        </div>
+                      )}
                   </div>
                 </div>
               )
             )}
+
             {isTyping && (
               <div className="flex items-center space-x-3">
                 <div
-                  className="w-10 h-10 flex-shrink-0 rounded-full flex items-center justify-center"
+                  className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-full"
                   style={{ background: 'linear-gradient(135deg, #d2b48c 0%, #e5e4e2 100%)' }}
                 >
-                  <span className="text-black text-lg">🤖</span>
+                  <span className="text-sm font-semibold text-black">AI</span>
                 </div>
                 <div className="rounded-2xl px-4 py-3" style={{ backgroundColor: '#e5e4e2' }}>
                   <div className="flex gap-1">
-                    <span className="w-2 h-2 rounded-full animate-bounce" style={{ backgroundColor: '#d2b48c', animationDelay: '0ms' }} />
-                    <span className="w-2 h-2 rounded-full animate-bounce" style={{ backgroundColor: '#d2b48c', animationDelay: '150ms' }} />
-                    <span className="w-2 h-2 rounded-full animate-bounce" style={{ backgroundColor: '#d2b48c', animationDelay: '300ms' }} />
+                    <span
+                      className="h-2 w-2 rounded-full animate-bounce"
+                      style={{ backgroundColor: '#d2b48c', animationDelay: '0ms' }}
+                    />
+                    <span
+                      className="h-2 w-2 rounded-full animate-bounce"
+                      style={{ backgroundColor: '#d2b48c', animationDelay: '150ms' }}
+                    />
+                    <span
+                      className="h-2 w-2 rounded-full animate-bounce"
+                      style={{ backgroundColor: '#d2b48c', animationDelay: '300ms' }}
+                    />
                   </div>
                 </div>
               </div>
             )}
+
             <div ref={messagesEndRef} />
+            </div>
           </div>
 
-          <div className="p-4 flex-shrink-0 border-t relative z-10" style={{ borderColor: '#e5e4e2', backgroundColor: 'rgba(248, 249, 250, 0.9)' }}>
+          <div
+            className="relative z-10 flex-shrink-0 border-t p-4"
+            style={{ borderColor: '#e5e4e2', backgroundColor: 'rgba(248, 249, 250, 0.95)' }}
+          >
             {!user && (
-              <p className="text-sm mb-2" style={{ color: '#6b5b4f' }}>
+              <p className="mb-2 text-sm" style={{ color: '#6b5b4f' }}>
                 Sign in to use the assistant.
               </p>
             )}
-            <div className="flex gap-2">
-              <input
-                type="text"
-                value={input}
-                onChange={(e) => setInput(e.target.value)}
-                onKeyDown={handleKeyDown}
-                placeholder={user ? 'Describe your event...' : 'Sign in to use the assistant'}
-                disabled={!user}
-                className="flex-1 px-4 py-3 rounded-xl text-black placeholder-gray-500 transition-all duration-200 disabled:opacity-60 disabled:cursor-not-allowed"
-                style={{ borderWidth: '1px', borderColor: '#e5e4e2', backgroundColor: '#fff' }}
-                onFocus={(e) => {
-                  if (user) {
-                    e.target.style.borderColor = '#d2b48c';
-                    e.target.style.boxShadow = '0 0 0 2px rgba(210, 180, 140, 0.3)';
-                  }
-                }}
-                onBlur={(e) => {
-                  e.target.style.borderColor = '#e5e4e2';
-                  e.target.style.boxShadow = 'none';
-                }}
-              />
-              <button
-                type="button"
-                onClick={handleSend}
-                disabled={!user || !input.trim()}
-                className="px-5 py-3 font-semibold rounded-xl transition-all duration-200 shadow hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:opacity-50"
-                style={{ background: 'linear-gradient(135deg, #e5e4e2 0%, #d2b48c 100%)', color: '#000' }}
-              >
-                Send
-              </button>
+            <div className="rounded-[22px] border border-[#ddd1c2] bg-white p-2 shadow-sm">
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  value={input}
+                  onChange={(event) => setInput(event.target.value)}
+                  onKeyDown={handleKeyDown}
+                  placeholder={user ? 'Describe your event, draft copy, or ask for an invite style...' : 'Sign in to use the assistant'}
+                  disabled={!user}
+                  className="flex-1 rounded-xl px-4 py-3 text-black placeholder-gray-500 transition-all duration-200 disabled:cursor-not-allowed disabled:opacity-60"
+                  style={{ borderWidth: '1px', borderColor: '#e5e4e2', backgroundColor: '#fff' }}
+                  onFocus={(event) => {
+                    if (user) {
+                      event.target.style.borderColor = '#d2b48c';
+                      event.target.style.boxShadow = '0 0 0 2px rgba(210, 180, 140, 0.3)';
+                    }
+                  }}
+                  onBlur={(event) => {
+                    event.target.style.borderColor = '#e5e4e2';
+                    event.target.style.boxShadow = 'none';
+                  }}
+                />
+                <button
+                  type="button"
+                  onClick={handleSend}
+                  disabled={!user || !input.trim()}
+                  className="rounded-xl px-5 py-3 font-semibold shadow transition-all duration-200 hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:opacity-50"
+                  style={{ background: 'linear-gradient(135deg, #e5e4e2 0%, #d2b48c 100%)', color: '#000' }}
+                >
+                  Send
+                </button>
+              </div>
             </div>
+            <p className="mt-3 text-xs uppercase tracking-[0.18em] text-[#8a6d54]">
+              Image prompts return a template card. Email copy and planning prompts stay text-based.
+            </p>
           </div>
         </div>
 
-        {/* Right 20% - Sidebar: chat history + Home */}
         <div
-          className="w-[20%] min-w-[200px] flex flex-col border-l"
+          className="hidden min-w-[280px] w-[22%] flex-col border-l lg:flex"
           style={{ backgroundColor: '#e5e4e2', borderColor: '#d3d3d3' }}
         >
-          <div className="p-4 flex-shrink-0 border-b" style={{ borderColor: '#d3d3d3' }}>
-            <button
-              type="button"
-              onClick={goHome}
-              className="w-full flex items-center justify-center gap-2 px-4 py-3 font-semibold rounded-xl transition-all duration-200 shadow text-black hover:opacity-90"
-              style={{ background: 'linear-gradient(135deg, #e5e4e2 0%, #d2b48c 100%)' }}
-            >
-              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6" />
-              </svg>
-              Home
-            </button>
+          <div className="flex-shrink-0 border-b p-4" style={{ borderColor: '#d3d3d3' }}>
+            <div className="grid gap-2">
+              <button
+                type="button"
+                onClick={goHome}
+                className="flex w-full items-center justify-center gap-2 rounded-full border border-[#d9cec1] bg-white px-4 py-3 text-sm font-semibold text-[#4f3422] shadow-sm transition hover:bg-[#fffaf4]"
+              >
+                <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6"
+                  />
+                </svg>
+                Home
+              </button>
+            </div>
           </div>
-          <div className="flex-1 overflow-hidden flex flex-col min-h-0">
-            <div className="p-3 flex-shrink-0">
+
+          <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+            <div className="flex-shrink-0 p-3 space-y-3">
+              <div className="rounded-2xl border border-[#d9cec1] bg-[#f6efe4] px-3 py-3">
+                <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#855d3b]">Quick status</p>
+                <div className="mt-3 space-y-2">
+                  <div className="rounded-xl bg-white px-3 py-3">
+                    <p className="text-xs font-semibold uppercase tracking-[0.14em] text-[#9a7a56]">Image result</p>
+                    <p className="mt-1 text-sm font-semibold text-[#2d1810]">
+                      {latestGeneratedImage ? 'Ready for actions' : 'No image yet'}
+                    </p>
+                  </div>
+                  <div className="rounded-xl bg-white px-3 py-3">
+                    <p className="text-xs font-semibold uppercase tracking-[0.14em] text-[#9a7a56]">Text draft</p>
+                    <p className="mt-1 text-sm font-semibold text-[#2d1810]">
+                      {latestTextResult ? 'Ready to save' : 'No draft yet'}
+                    </p>
+                  </div>
+                  {selectedEvent ? (
+                    <>
+                      <button
+                        type="button"
+                        onClick={() => router.push(`/events/${selectedEvent.id}`)}
+                        className="w-full rounded-xl bg-white px-3 py-2.5 text-sm font-semibold text-[#4f3422] transition hover:bg-[#fffaf4]"
+                      >
+                        Open event workspace
+                      </button>
+                    </>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => router.push('/events')}
+                      className="w-full rounded-xl bg-white px-3 py-2.5 text-sm font-semibold text-[#4f3422] transition hover:bg-[#fffaf4]"
+                    >
+                      Choose an event
+                    </button>
+                  )}
+                </div>
+              </div>
+
               <button
                 type="button"
                 onClick={startNewChat}
-                className="w-full flex items-center justify-center gap-2 px-3 py-2.5 text-sm font-medium rounded-lg transition-colors text-black hover:bg-[#e5e4e2]"
+                className="flex w-full items-center justify-center gap-2 rounded-lg px-3 py-2.5 text-sm font-medium text-black transition-colors hover:bg-[#e5e4e2]"
                 style={{ backgroundColor: '#f8f9fa', borderWidth: '1px', borderColor: '#d3d3d3' }}
               >
-                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
                 </svg>
                 New chat
               </button>
             </div>
-            <div className="px-3 pb-2 flex-shrink-0">
-              <h4 className="text-sm font-semibold text-black">Chat history</h4>
+
+            <div className="flex-shrink-0 px-3 pb-2">
+              <div className="rounded-2xl border border-[#d9cec1] bg-[#f6efe4] px-3 py-3">
+                <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#855d3b]">History</p>
+                <div className="mt-2 flex items-center justify-between">
+                  <h4 className="text-sm font-semibold text-black">Saved chats</h4>
+                  <span className="rounded-full bg-white px-2 py-1 text-xs font-semibold text-[#6b5b4f]">
+                    {chatHistory.length}
+                  </span>
+                </div>
+              </div>
             </div>
-            <div className="flex-1 overflow-y-auto px-2 space-y-1 min-h-0">
+
+            <div className="min-h-0 flex-1 space-y-1 overflow-y-auto px-2">
               {chatHistory.length === 0 ? (
-                <p className="text-sm px-2 py-4" style={{ color: '#6b5b4f' }}>No chats yet. Start a conversation and it will appear here.</p>
+                <p className="px-2 py-4 text-sm" style={{ color: '#6b5b4f' }}>
+                  No chats yet. Start a conversation and it will appear here.
+                </p>
               ) : (
                 [...chatHistory]
                   .sort((a, b) => b.createdAt - a.createdAt)
                   .map((session) => (
-                    <button
+                    <div
                       key={session.id}
-                      type="button"
-                      onClick={() => openHistoryChat(session)}
-                      className="w-full text-left px-3 py-2.5 rounded-lg text-sm transition-colors truncate block"
+                      className="group flex items-center gap-1 rounded-lg text-sm transition-colors"
                       style={
                         activeChatId === session.id
-                          ? { backgroundColor: '#d2b48c', color: '#000', fontWeight: 600 }
+                          ? { backgroundColor: '#d2b48c', color: '#000' }
                           : { color: '#2d1810' }
                       }
-                      onMouseEnter={(e) => {
-                        if (activeChatId !== session.id) {
-                          e.currentTarget.style.backgroundColor = 'rgba(210, 180, 140, 0.4)';
-                        }
-                      }}
-                      onMouseLeave={(e) => {
-                        if (activeChatId !== session.id) {
-                          e.currentTarget.style.backgroundColor = 'transparent';
-                        }
-                      }}
-                      title={session.title}
                     >
-                      {session.title}
-                    </button>
+                      <button
+                        type="button"
+                        onClick={() => openHistoryChat(session)}
+                        className="min-w-0 flex-1 truncate rounded-lg px-3 py-2.5 text-left font-medium"
+                        onMouseEnter={(event) => {
+                          if (activeChatId !== session.id) {
+                            event.currentTarget.parentElement!.style.backgroundColor = 'rgba(210, 180, 140, 0.4)';
+                          }
+                        }}
+                        onMouseLeave={(event) => {
+                          if (activeChatId !== session.id) {
+                            event.currentTarget.parentElement!.style.backgroundColor = 'transparent';
+                          }
+                        }}
+                        title={session.title}
+                      >
+                        <span className="block truncate">{session.title}</span>
+                        <span className="mt-0.5 block text-xs opacity-80" style={{ fontWeight: 400 }}>
+                          {formatSessionDate(session.createdAt)}
+                        </span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={(event) => deleteSession(session.id, event)}
+                        className="flex-shrink-0 rounded p-1.5 opacity-70 transition-opacity hover:bg-black/10 hover:opacity-100"
+                        title="Delete chat"
+                        aria-label="Delete chat"
+                      >
+                        <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            strokeWidth={2}
+                            d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
+                          />
+                        </svg>
+                      </button>
+                    </div>
                   ))
               )}
             </div>
@@ -436,78 +1177,44 @@ export default function ChatbotModal() {
         </div>
       </div>
 
-      {/* Image lightbox: zoom and save */}
-      {lightboxImage && (
-        <div
-          className="fixed inset-0 z-[60] flex flex-col bg-black/80"
-          role="dialog"
-          aria-modal="true"
-          aria-label="Image preview"
-        >
-          <div className="flex-shrink-0 flex items-center justify-between gap-4 p-3 bg-black/50">
-            <div className="flex items-center gap-2">
-              <button
-                type="button"
-                onClick={() => setLightboxZoom((z) => Math.max(0.5, z - 0.25))}
-                className="p-2 rounded-lg text-white hover:bg-white/20 transition-colors"
-                title="Zoom out"
-                aria-label="Zoom out"
-              >
-                <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20 12H4" />
-                </svg>
-              </button>
-              <span className="text-white text-sm min-w-[3rem] text-center">{Math.round(lightboxZoom * 100)}%</span>
-              <button
-                type="button"
-                onClick={() => setLightboxZoom((z) => Math.min(3, z + 0.25))}
-                className="p-2 rounded-lg text-white hover:bg-white/20 transition-colors"
-                title="Zoom in"
-                aria-label="Zoom in"
-              >
-                <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
-                </svg>
-              </button>
-            </div>
-            <div className="flex items-center gap-2">
-              <button
-                type="button"
-                onClick={() => saveImage(lightboxImage)}
-                className="flex items-center gap-2 px-4 py-2 rounded-lg font-medium text-black bg-[#d2b48c] hover:bg-[#c4a67a] transition-colors"
-              >
-                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
-                </svg>
-                Save image
-              </button>
-              <button
-                type="button"
-                onClick={closeLightbox}
-                className="p-2 rounded-lg text-white hover:bg-white/20 transition-colors"
-                title="Close"
-                aria-label="Close"
-              >
-                <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                </svg>
-              </button>
-            </div>
-          </div>
-          <div
-            className="flex-1 overflow-auto flex items-center justify-center p-4"
-            onClick={(e) => e.target === e.currentTarget && closeLightbox()}
-          >
-            <img
-              src={lightboxImage}
-              alt="Generated design"
-              className="max-w-full max-h-full object-contain transition-transform origin-center"
-              style={{ transform: `scale(${lightboxZoom})` }}
-              onClick={(e) => e.stopPropagation()}
-              draggable={false}
-            />
-          </div>
-        </div>
+      {actionImage && (
+        <ImageActionModal
+          imageSrc={actionImage}
+          onClose={closeImageActions}
+          onDownloadTemplate={() => saveImage(actionImage)}
+          onCreateInvite={openInviteEditor}
+          onSaveToEvent={openSaveTemplateToEvent}
+        />
+      )}
+
+      {editorImage && (
+        <InviteEditorModal
+          backgroundSrc={editorImage}
+          onClose={() => setEditorImage(null)}
+          onSaveToEvent={handleSaveInviteToEvent}
+        />
+      )}
+
+      {pendingEventSave && (
+        <SaveToEventModal
+          title={
+            pendingEventSave.type === 'emailDraft'
+              ? 'Attach this email draft'
+              : pendingEventSave.type === 'finalInvite'
+                ? 'Attach this finished invite'
+                : 'Attach this invite template'
+          }
+          description={
+            pendingEventSave.type === 'emailDraft'
+              ? 'This stores the AI-written email copy under the event so it can become your send-ready message later.'
+              : 'This stores the current invite asset under the event so you have one place for the image and outgoing copy.'
+          }
+          events={events}
+          selectedEventId={selectedEventId}
+          onSelectEvent={setSelectedEventId}
+          onClose={() => setPendingEventSave(null)}
+          onConfirm={confirmSaveToEvent}
+        />
       )}
     </>
   );
