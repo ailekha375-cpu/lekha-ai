@@ -7,6 +7,7 @@ import { useParams, useRouter } from 'next/navigation';
 import Footer from '../../../components/Footer';
 import Header from '../../../components/Header';
 import PageBackButton from '../../../components/PageBackButton';
+import { buildPublicRsvpUrl } from '../../../lib/publicAppUrl';
 import { useAuth } from '../../../lib/useAuth';
 import type { EventRecord, GuestRecord, GuestResponseRecord, RsvpResponseRecord } from '../../../lib/eventTypes';
 
@@ -127,8 +128,6 @@ export default function EventResponsesPage() {
       }
     );
   }, [responses]);
-  const responseRate = guestRows.length > 0 ? Math.round((responses.length / guestRows.length) * 100) : 0;
-
   return (
     <main className="min-h-screen">
       <Header />
@@ -170,11 +169,6 @@ export default function EventResponsesPage() {
           ) : (
             <div className="space-y-6">
               <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-6">
-                <div className="rounded-[22px] bg-[#f3ece7] px-4 py-4">
-                  <p className="text-xs font-semibold uppercase tracking-[0.16em] text-[#8a6d54]">Response rate</p>
-                  <p className="mt-2 text-2xl font-semibold text-[#2d1810]">{responseRate}%</p>
-                  <p className="mt-1 text-xs text-[#6b5b4f]">{responses.length} of {guestRows.length} replied</p>
-                </div>
                 <div className="rounded-[22px] bg-[#f7efe4] px-4 py-4">
                   <p className="text-xs font-semibold uppercase tracking-[0.16em] text-[#8a6d54]">Attending</p>
                   <p className="mt-2 text-2xl font-semibold text-[#2d1810]">{attendanceSummary.attending}</p>
@@ -233,16 +227,17 @@ export default function EventResponsesPage() {
                           </div>
                           <div className="text-right">
                             <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#9a7a56]">Public RSVP URL</p>
-                            <Link
-                              href={`/rsvp/${guest.rsvpToken}`}
+                            <a
+                              href={buildPublicRsvpUrl(guest.rsvpToken)}
                               target="_blank"
+                              rel="noreferrer"
                               className="mt-2 inline-block break-all text-sm font-medium text-[#4b6cb7] hover:underline"
                             >
-                              {`/rsvp/${guest.rsvpToken}`}
-                            </Link>
+                              {buildPublicRsvpUrl(guest.rsvpToken)}
+                            </a>
                             <button
                               type="button"
-                              onClick={() => navigator.clipboard.writeText(`${window.location.origin}/rsvp/${guest.rsvpToken}`)}
+                              onClick={() => navigator.clipboard.writeText(buildPublicRsvpUrl(guest.rsvpToken))}
                               className="mt-3 inline-flex rounded-full border border-[#ddcfbe] px-3 py-2 text-xs font-semibold uppercase tracking-[0.14em] text-[#6b5b4f] transition hover:bg-white"
                             >
                               Copy full link

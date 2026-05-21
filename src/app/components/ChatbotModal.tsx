@@ -8,6 +8,7 @@ import ChatPanelPoppers from './ChatPanelPoppers';
 import ImageActionModal from './ImageActionModal';
 import InviteEditorModal from './InviteEditorModal';
 import SaveToEventModal from './SaveToEventModal';
+import { sanitizeEmailDraft } from '../lib/emailDraft';
 import type { EventRecord } from '../lib/eventTypes';
 import {
   linkChatToEvent,
@@ -21,6 +22,13 @@ type Message = {
   content: string;
   imageBase64?: string;
   imageUrl?: string;
+  action?: {
+    type: 'confirmSendInvites';
+    eventId: string;
+    eventTitle: string;
+    status: 'pending' | 'running' | 'done' | 'failed';
+    resultSummary?: string;
+  };
 };
 
 export type ChatSession = {
@@ -104,6 +112,14 @@ function formatEventMeta(value?: string | null) {
   } catch {
     return value;
   }
+}
+
+function isSendInvitePrompt(text: string) {
+  const normalized = text.trim().toLowerCase();
+  return (
+    /\bsend\b/.test(normalized) &&
+    /\b(invite|invites|email|emails)\b/.test(normalized)
+  ) || /\bsend to (all|everyone|pending)\b/.test(normalized);
 }
 
 function ImageMessage({
@@ -374,6 +390,88 @@ export default function ChatbotModal({ asPage = false }: ChatbotModalProps) {
     }
   };
 
+  const replaceMessageActionState = (
+    messageId: string,
+    updater: (message: Message) => Message
+  ) => {
+    setCurrentChat((prev) => prev.map((message) => (message.id === messageId ? updater(message) : message)));
+    setChatHistory((prev) =>
+      prev.map((session) =>
+        session.id === activeChatId
+          ? {
+              ...session,
+              messages: session.messages.map((message) => (message.id === messageId ? updater(message) : message)),
+            }
+          : session
+      )
+    );
+  };
+
+  const runSendInvitesFromChat = async (messageId: string, eventId: string) => {
+    if (!user) return;
+
+    replaceMessageActionState(messageId, (message) => ({
+      ...message,
+      action: message.action
+        ? {
+            ...message.action,
+            status: 'running',
+            resultSummary: 'Sending invite emails now...',
+          }
+        : message.action,
+    }));
+
+    try {
+      const idToken = await user.getIdToken();
+      const response = await fetch(`/api/events/${eventId}/send`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${idToken}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({}),
+      });
+      const data = await response.json().catch(() => ({}));
+
+      if (!response.ok) {
+        throw new Error(data?.error || `Request failed (${response.status})`);
+      }
+
+      const sentCount = Number(data?.sentCount || 0);
+      const skippedCount = Array.isArray(data?.results)
+        ? data.results.filter((result: { status?: string }) => result.status === 'skipped').length
+        : 0;
+      const summary = skippedCount
+        ? `Sent ${sentCount} invite email${sentCount === 1 ? '' : 's'} and skipped ${skippedCount}.`
+        : `Sent ${sentCount} invite email${sentCount === 1 ? '' : 's'}.`;
+
+      replaceMessageActionState(messageId, (message) => ({
+        ...message,
+        action: message.action
+          ? {
+              ...message.action,
+              status: 'done',
+              resultSummary: summary,
+            }
+          : message.action,
+      }));
+      setSessionNotice(summary);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to send invites.';
+      replaceMessageActionState(messageId, (chatMessage) => ({
+        ...chatMessage,
+        action: chatMessage.action
+          ? {
+              ...chatMessage.action,
+              status: 'failed',
+              resultSummary: message,
+            }
+          : chatMessage.action,
+      }));
+      setSessionNotice(message);
+    }
+  };
+
   const handleSend = async () => {
     const text = input.trim();
     if (!text) return;
@@ -399,6 +497,54 @@ export default function ChatbotModal({ asPage = false }: ChatbotModalProps) {
     setInput('');
     setIsTyping(true);
     setSessionNotice('');
+
+    if (isSendInvitePrompt(text)) {
+      if (!selectedEvent) {
+        const withReply = [
+          ...newMessages,
+          {
+            id: `bot-${Date.now()}`,
+            role: 'assistant' as const,
+            content: 'Choose an event first, then I can send invite emails for it from this chat.',
+          },
+        ];
+        setCurrentChat(withReply);
+        setIsTyping(false);
+        return;
+      }
+
+      const confirmationMessage: Message = {
+        id: `bot-${Date.now()}`,
+        role: 'assistant',
+        content: `I’m ready to send the saved invite and email draft for ${selectedEvent.title}. I’ll only send after you confirm below.`,
+        action: {
+          type: 'confirmSendInvites',
+          eventId: selectedEvent.id,
+          eventTitle: selectedEvent.title,
+          status: 'pending',
+        },
+      };
+      const withReply = [...newMessages, confirmationMessage];
+      setCurrentChat(withReply);
+      setIsTyping(false);
+      const newChatId = activeChatId || `chat-${Date.now()}`;
+      if (!activeChatId) setActiveChatId(newChatId);
+      setChatHistory((prev) => {
+        const rest = prev.filter((session) => session.id !== newChatId);
+        const existing = prev.find((session) => session.id === newChatId);
+        return [
+          ...rest,
+          {
+            id: newChatId,
+            title: getChatTitle(withReply),
+            messages: withReply,
+            createdAt: Date.now(),
+            conversationId: existing?.conversationId ?? null,
+          },
+        ];
+      });
+      return;
+    }
 
     const conversationId = activeChatId
       ? (chatHistory.find((session) => session.id === activeChatId)?.conversationId ?? null)
@@ -664,7 +810,7 @@ export default function ChatbotModal({ asPage = false }: ChatbotModalProps) {
   const openSaveEmailToEvent = (message: Message) => {
     setPendingEventSave({
       type: 'emailDraft',
-      content: message.content,
+      content: sanitizeEmailDraft(message.content),
       messageId: message.id,
     });
   };
@@ -743,7 +889,7 @@ export default function ChatbotModal({ asPage = false }: ChatbotModalProps) {
       )}
 
       <div
-        className={`w-full flex ${asPage ? 'min-h-screen' : 'fixed inset-y-0 left-0 z-50 shadow-2xl transition-transform duration-300 ease-out'}`}
+        className={`w-full flex ${asPage ? 'h-screen overflow-hidden' : 'fixed inset-y-0 left-0 z-50 shadow-2xl transition-transform duration-300 ease-out'}`}
         style={asPage ? undefined : { transform: hasSlidIn ? 'translateX(0)' : 'translateX(-100%)' }}
       >
         <div
@@ -768,13 +914,13 @@ export default function ChatbotModal({ asPage = false }: ChatbotModalProps) {
             </div>
           </div>
 
-          <div className="relative z-10 min-h-0 flex-1 overflow-y-auto p-4 space-y-4">
-            <div className="rounded-[22px] border border-[#ece2d7] bg-white px-4 py-4 shadow-sm">
-              <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+          <div className="relative z-10 flex min-h-0 flex-1 flex-col px-4 pb-4 pt-3">
+            <div className="flex-shrink-0 rounded-[20px] border border-[#ece2d7] bg-white px-4 py-3 shadow-sm">
+              <div className="flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
                 <div className="min-w-0">
-                  <p className="text-xs font-semibold uppercase tracking-[0.22em] text-[#9a7a56]">Current event</p>
+                  <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#9a7a56]">Current event</p>
                   {selectedEvent ? (
-                    <div className="mt-2 flex flex-wrap items-center gap-2">
+                    <div className="mt-1.5 flex flex-wrap items-center gap-2">
                       <span className="text-sm font-semibold text-[#2d1810]">{selectedEvent.title}</span>
                       <span className="rounded-full bg-[#f5ecdf] px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-[#855d3b]">
                         {selectedEvent.status || 'draft'}
@@ -824,22 +970,13 @@ export default function ChatbotModal({ asPage = false }: ChatbotModalProps) {
             </div>
 
             {sessionNotice && (
-              <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+              <div className="mt-3 flex-shrink-0 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
                 {sessionNotice}
               </div>
             )}
 
-            <div className="rounded-[28px] border border-[#e8ddd1] bg-white px-4 py-5 shadow-sm">
-              <div className="mb-5 flex items-center justify-between gap-3">
-                <div>
-                  <p className="text-xs font-semibold uppercase tracking-[0.22em] text-[#9a7a56]">Conversation</p>
-                  <h4 className="mt-2 text-xl font-semibold text-[#2d1810]">Prompt, review, and save outputs</h4>
-                </div>
-                <div className="hidden rounded-full bg-[#f5ecdf] px-3 py-2 text-xs font-semibold uppercase tracking-[0.14em] text-[#855d3b] lg:block">
-                  {latestGeneratedImage ? 'Image ready' : latestTextResult ? 'Draft ready' : 'Start with a prompt'}
-                </div>
-              </div>
-
+            <div className="mt-3 flex min-h-0 flex-1 flex-col rounded-[28px] border border-[#e8ddd1] bg-white px-4 py-4 shadow-sm">
+            <div className="min-h-0 flex-1 overflow-y-auto pr-2">
             {currentChat.map((message) =>
               message.role === 'user' ? (
                 <div key={message.id} className="mb-4 flex items-center justify-end space-x-3">
@@ -847,14 +984,13 @@ export default function ChatbotModal({ asPage = false }: ChatbotModalProps) {
                     className="max-w-[85%] rounded-[22px] px-4 py-3 shadow-sm"
                     style={{ background: 'linear-gradient(135deg, #e5e4e2 0%, #d2b48c 100%)' }}
                   >
-                    <p className="mb-2 text-xs font-semibold uppercase tracking-[0.14em] text-[#5c4330]">Your prompt</p>
                     <p className="text-sm text-black">{message.content}</p>
                   </div>
                   <div
                     className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-full"
                     style={{ background: 'linear-gradient(135deg, #d2b48c 0%, #e5e4e2 100%)' }}
                   >
-                    <span className="text-sm font-semibold text-black">You</span>
+                    <span className="text-sm font-semibold text-black">Y</span>
                   </div>
                 </div>
               ) : (
@@ -863,7 +999,7 @@ export default function ChatbotModal({ asPage = false }: ChatbotModalProps) {
                     className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-full"
                     style={{ background: 'linear-gradient(135deg, #d2b48c 0%, #e5e4e2 100%)' }}
                   >
-                    <span className="text-sm font-semibold text-black">AI</span>
+                    <span className="text-sm font-semibold text-black">L</span>
                   </div>
                   <div
                     className={`max-w-[90%] space-y-3 rounded-[24px] border px-4 py-4 shadow-sm ${
@@ -872,19 +1008,6 @@ export default function ChatbotModal({ asPage = false }: ChatbotModalProps) {
                         : 'border-[#e6ddd2] bg-[#f7f2eb]'
                     }`}
                   >
-                    <div className="flex items-center justify-between gap-3">
-                      <div>
-                        <p className="text-xs font-semibold uppercase tracking-[0.16em] text-[#9a7a56]">
-                          {message.imageUrl || message.imageBase64 ? 'Image result' : message.id === 'welcome' ? 'Welcome' : 'Text result'}
-                        </p>
-                      </div>
-                      {message.id !== 'welcome' && (
-                        <span className="rounded-full bg-white px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-[#855d3b]">
-                          Assistant
-                        </span>
-                      )}
-                    </div>
-
                     {(message.imageUrl || message.imageBase64) ? (
                       <div className="space-y-3">
                         <ImageMessage
@@ -912,34 +1035,60 @@ export default function ChatbotModal({ asPage = false }: ChatbotModalProps) {
                     ) : (
                       <>
                         {message.content && <p className="text-sm leading-7 text-black">{message.content}</p>}
-                        {message.id !== 'welcome' && (
-                          <div className="rounded-[18px] bg-white px-4 py-3">
-                            <p className="text-sm font-semibold text-[#2d1810]">Use this draft</p>
-                            <p className="mt-1 text-sm leading-6 text-[#6b5b4f]">
-                              Save it to the selected event as outgoing email copy, or copy it directly.
-                            </p>
-                          </div>
-                        )}
                       </>
                     )}
                     {!message.imageUrl &&
                       !message.imageBase64 &&
                       message.id !== 'welcome' && (
                         <div className="mt-3 flex flex-wrap gap-2">
-                          <button
-                            type="button"
-                            onClick={() => openSaveEmailToEvent(message)}
-                            className="rounded-full bg-[#2d1810] px-3 py-2 text-xs font-semibold uppercase tracking-[0.14em] text-white transition hover:bg-[#4a2e1d]"
-                          >
-                            Save email to event
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => navigator.clipboard.writeText(message.content)}
-                            className="rounded-full border border-[#ddd1c2] px-3 py-2 text-xs font-semibold text-[#5c4330] transition hover:bg-[#f7efe4]"
-                          >
-                            Copy text
-                          </button>
+                          {message.action?.type === 'confirmSendInvites' && (
+                            <>
+                              <button
+                                type="button"
+                                onClick={() => runSendInvitesFromChat(message.id, message.action!.eventId)}
+                                disabled={message.action.status === 'running' || message.action.status === 'done'}
+                                className="rounded-full bg-[#2d1810] px-3 py-1.5 text-[11px] font-semibold uppercase tracking-[0.12em] text-white transition hover:bg-[#4a2e1d] disabled:cursor-not-allowed disabled:opacity-50"
+                              >
+                                {message.action.status === 'running'
+                                  ? 'Sending now...'
+                                  : message.action.status === 'done'
+                                    ? 'Invites sent'
+                                    : 'Send invites now'}
+                              </button>
+                              <span className="rounded-full border border-[#ddd1c2] bg-white px-3 py-1.5 text-[11px] font-semibold uppercase tracking-[0.12em] text-[#5c4330]">
+                                {message.action.eventTitle}
+                              </span>
+                              {message.action.resultSummary && (
+                                <p className="w-full text-sm text-[#6b5b4f]">{message.action.resultSummary}</p>
+                              )}
+                            </>
+                          )}
+                          {!message.action && (
+                            <>
+                              <button
+                                type="button"
+                                onClick={() => openSaveEmailToEvent(message)}
+                                className="rounded-full bg-[#2d1810] px-3 py-1.5 text-[11px] font-semibold uppercase tracking-[0.12em] text-white transition hover:bg-[#4a2e1d]"
+                              >
+                                Save email to event
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => navigator.clipboard.writeText(message.content)}
+                                className="rounded-full border border-[#ddd1c2] px-3 py-1.5 text-[11px] font-semibold text-[#5c4330] transition hover:bg-[#f7efe4]"
+                              >
+                                Copy text
+                              </button>
+                              <button
+                                type="button"
+                                title="Save this text to the selected event as outgoing email copy, or copy it directly."
+                                aria-label="How to use this draft"
+                                className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-[#ddd1c2] bg-white text-xs font-semibold text-[#7a5c42] transition hover:bg-[#f7efe4]"
+                              >
+                                i
+                              </button>
+                            </>
+                          )}
                         </div>
                       )}
                   </div>
@@ -976,10 +1125,11 @@ export default function ChatbotModal({ asPage = false }: ChatbotModalProps) {
 
             <div ref={messagesEndRef} />
             </div>
+            </div>
           </div>
 
           <div
-            className="relative z-10 flex-shrink-0 border-t p-4"
+            className="relative z-10 flex-shrink-0 border-t px-4 pb-4 pt-3"
             style={{ borderColor: '#e5e4e2', backgroundColor: 'rgba(248, 249, 250, 0.95)' }}
           >
             {!user && (
@@ -1020,9 +1170,6 @@ export default function ChatbotModal({ asPage = false }: ChatbotModalProps) {
                 </button>
               </div>
             </div>
-            <p className="mt-3 text-xs uppercase tracking-[0.18em] text-[#8a6d54]">
-              Image prompts return a template card. Email copy and planning prompts stay text-based.
-            </p>
           </div>
         </div>
 

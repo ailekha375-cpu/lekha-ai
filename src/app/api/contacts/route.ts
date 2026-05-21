@@ -1,17 +1,17 @@
 import { NextRequest, NextResponse } from 'next/server';
-
-import type { EventRecord } from '@/app/lib/eventTypes';
 import { buildAzureRoute, proxyAzureJson } from '../_azureProxy';
 
 export const dynamic = 'force-dynamic';
 
-function getEventsUrl() {
-  return buildAzureRoute('/api/events');
+function getContactsUrl() {
+  return buildAzureRoute('/api/contacts');
 }
 
 export async function GET(request: NextRequest) {
   try {
-    return await proxyAzureJson(request, getEventsUrl(), { method: 'GET' });
+    return await proxyAzureJson(request, getContactsUrl(), {
+      method: 'GET',
+    });
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Unknown error';
     return NextResponse.json({ error: message }, { status: 502 });
@@ -20,10 +20,12 @@ export async function GET(request: NextRequest) {
 
 export async function POST(request: NextRequest) {
   try {
-    const body = (await request.json()) as Partial<EventRecord>;
-    return await proxyAzureJson(request, getEventsUrl(), {
+    const body = await request.json();
+    return await proxyAzureJson(request, getContactsUrl(), {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+      },
       body: JSON.stringify(body),
     });
   } catch (err) {

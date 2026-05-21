@@ -166,10 +166,6 @@ export default function EventsPage() {
       });
       const data = await res.json();
       if (!res.ok) {
-        if (res.status === 404) {
-          setEvents((current) => current.filter((entry) => entry.id !== eventId));
-          return;
-        }
         throw new Error(data?.error || 'Failed to delete event');
       }
       setEvents((current) => current.filter((entry) => entry.id !== eventId));
@@ -408,7 +404,7 @@ export default function EventsPage() {
                           </div>
                           <div className="mt-4 flex items-center justify-between gap-3">
                             <div className="inline-flex rounded-full bg-[#f7efe4] px-3 py-2 text-xs font-semibold uppercase tracking-[0.18em] text-[#855d3b]">
-                              Manage guests and RSVP links
+                              Manage recipients and RSVP links
                             </div>
                             <button
                               type="button"

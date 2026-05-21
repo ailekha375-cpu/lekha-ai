@@ -11,7 +11,7 @@ import { useModal } from './ModalContext';
 const SERVICE_LINKS = [
   { href: '/chat', label: 'Design with AI', description: 'Generate invite art and open the composer.' },
   { href: '/events', label: 'Create Events', description: 'Save event details and set RSVP deadlines.' },
-  { href: '/events', label: 'Invite Guests', description: 'Add guest records and create personal RSVP links.' },
+  { href: '/guests', label: 'My Guests', description: 'Manage reusable contacts across all of your events.' },
   { href: '/responses', label: 'Track RSVPs', description: 'Open RSVP dashboards for your events and review responses.' },
 ];
 
@@ -202,6 +202,13 @@ export default function Header() {
                     onClick={() => setIsProfileDropdownOpen(false)}
                   >
                     My events
+                  </Link>
+                  <Link
+                    href="/guests"
+                    className="block rounded-[18px] px-4 py-3 text-sm font-medium text-[#2d1810] transition hover:bg-[#f8f2ea]"
+                    onClick={() => setIsProfileDropdownOpen(false)}
+                  >
+                    My guests
                   </Link>
                   <Link
                     href="/chat"

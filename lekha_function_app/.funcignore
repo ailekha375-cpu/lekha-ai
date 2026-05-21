@@ -1,0 +1,11 @@
+azurevenv/
+.venv/
+venv/
+.python_packages/
+__pycache__/
+.vscode/
+.git/
+.gitignore
+local.settings.json
+firebase-service-account.json
+*.pyc

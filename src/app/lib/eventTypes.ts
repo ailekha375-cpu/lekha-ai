@@ -45,10 +45,24 @@ export type EventRecord = {
   updatedAt?: string;
 };
 
+export type ContactRecord = {
+  id: string;
+  uid?: string;
+  name: string;
+  email?: string;
+  phone?: string;
+  category?: string;
+  notes?: string;
+  defaultGuestCount?: number;
+  createdAt?: string;
+  updatedAt?: string;
+};
+
 export type GuestRecord = {
   id: string;
   eventId: string;
   uid?: string;
+  contactId?: string | null;
   name: string;
   email: string;
   phone?: string;
@@ -56,6 +70,8 @@ export type GuestRecord = {
   isPrimaryGuest?: boolean;
   maxGuests?: number;
   guestType?: string;
+  category?: string;
+  notes?: string;
   rsvpToken: string;
   inviteStatus?: string;
   inviteSentAt?: string | null;
