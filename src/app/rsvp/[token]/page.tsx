@@ -7,7 +7,10 @@ import { useParams } from 'next/navigation';
 import Footer from '../../components/Footer';
 import Header from '../../components/Header';
 import PageBackButton from '../../components/PageBackButton';
+import { apiRequest } from '../../lib/apiClient';
+import { getErrorMessage } from '../../lib/errors';
 import type { EventRecord, GuestRecord, RsvpResponseRecord } from '../../lib/eventTypes';
+import { validateRsvpInput } from '../../lib/validators';
 
 type RsvpPayload = {
   attendanceStatus: 'attending' | 'not_attending' | 'maybe';
@@ -40,11 +43,11 @@ export default function RsvpPage() {
       setLoading(true);
       setError('');
       try {
-        const res = await fetch(`/api/rsvp/${params.token}`);
-        const data = await res.json();
-        if (!res.ok) {
-          throw new Error(data?.error || 'Failed to load RSVP');
-        }
+        const data = await apiRequest<{
+          event?: EventRecord | null;
+          guest?: GuestRecord | null;
+          response?: RsvpResponseRecord | null;
+        }>(`/api/rsvp/${params.token}`);
         setEvent(data?.event || null);
         setGuest(data?.guest || null);
         setExistingResponse(data?.response || null);
@@ -56,7 +59,7 @@ export default function RsvpPage() {
           respondedBy: data?.response?.respondedBy || data?.guest?.name || '',
         });
       } catch (err) {
-        setError(err instanceof Error ? err.message : 'Failed to load RSVP');
+        setError(getErrorMessage(err, 'Failed to load RSVP'));
       } finally {
         setLoading(false);
       }
@@ -67,29 +70,37 @@ export default function RsvpPage() {
   async function handleSubmit(eventForm: React.FormEvent) {
     eventForm.preventDefault();
     if (!params?.token) return;
+    const maxGuests = Math.max(1, Number(guest?.maxGuests || 1));
+    const validation = validateRsvpInput({
+      respondedBy: form.respondedBy,
+      guestCount: form.guestCount,
+      maxGuests,
+    });
+    if (!validation.ok) {
+      setError(validation.message);
+      setSuccess('');
+      return;
+    }
+
     setSubmitting(true);
     setError('');
     setSuccess('');
     try {
-      const res = await fetch(`/api/rsvp/${params.token}`, {
+      const data = await apiRequest<{ response?: RsvpResponseRecord | null }>(`/api/rsvp/${params.token}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           attendanceStatus: form.attendanceStatus,
-          guestCount: Number(form.guestCount),
-          mealPreference: form.mealPreference,
-          notes: form.notes,
-          respondedBy: form.respondedBy,
+          guestCount: validation.value.guestCount,
+          mealPreference: form.mealPreference.trim(),
+          notes: form.notes.trim(),
+          respondedBy: validation.value.respondedBy,
         }),
       });
-      const data = await res.json();
-      if (!res.ok) {
-        throw new Error(data?.error || 'Failed to submit RSVP');
-      }
       setExistingResponse(data?.response || null);
       setSuccess('Your RSVP has been recorded.');
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to submit RSVP');
+      setError(getErrorMessage(err, 'Failed to submit RSVP'));
     } finally {
       setSubmitting(false);
     }

@@ -8,10 +8,13 @@ import Footer from '../../components/Footer';
 import Header from '../../components/Header';
 import PageBackButton from '../../components/PageBackButton';
 import RecipientPickerModal from '../../components/RecipientPickerModal';
+import { apiRequest } from '../../lib/apiClient';
 import { parseEmailDraft, sanitizeEmailDraft } from '../../lib/emailDraft';
+import { getErrorMessage } from '../../lib/errors';
 import { loadCampaignKit, saveCampaignKitPatch } from '../../lib/eventCampaignApi';
 import { buildPublicRsvpUrl } from '../../lib/publicAppUrl';
 import { useAuth } from '../../lib/useAuth';
+import { validateContactInput, validateSendSetup } from '../../lib/validators';
 import type {
   ContactRecord,
   EventCampaignKit,
@@ -59,39 +62,19 @@ export default function EventDetailPage() {
       setError('');
       try {
         const idToken = await user.getIdToken();
-        const [eventRes, guestsRes, responsesRes, contactsRes, campaignKitData] = await Promise.all([
-          fetch(`/api/events/${params.eventId}`, {
-            headers: { Authorization: `Bearer ${idToken}` },
-          }),
-          fetch(`/api/events/${params.eventId}/guests`, {
-            headers: { Authorization: `Bearer ${idToken}` },
-          }),
-          fetch(`/api/events/${params.eventId}/responses`, {
-            headers: { Authorization: `Bearer ${idToken}` },
-          }),
-          fetch('/api/contacts', {
-            headers: { Authorization: `Bearer ${idToken}` },
-          }),
+        const [eventData, guestsData, responsesData, contactsData, campaignKitData] = await Promise.all([
+          apiRequest<{ event: EventRecord }>(`/api/events/${params.eventId}`, { idToken }),
+          apiRequest<{ guests?: GuestRecord[] }>(`/api/events/${params.eventId}/guests`, { idToken }),
+          apiRequest<{ responses?: RsvpResponseRecord[] }>(`/api/events/${params.eventId}/responses`, { idToken })
+            .catch(() => ({ responses: [] })),
+          apiRequest<{ contacts?: ContactRecord[] }>('/api/contacts', { idToken }),
           loadCampaignKit(params.eventId, idToken),
         ]);
-
-        const eventData = await eventRes.json();
-        const guestsData = await guestsRes.json();
-        const responsesData = await responsesRes.json();
-        const contactsData = await contactsRes.json();
-
-        if (!eventRes.ok) throw new Error(eventData?.error || 'Failed to load event');
-        if (!guestsRes.ok) throw new Error(guestsData?.error || 'Failed to load recipients');
-        if (!contactsRes.ok) throw new Error(contactsData?.error || 'Failed to load contacts');
 
         setEvent(eventData.event);
         setGuests(Array.isArray(guestsData?.guests) ? guestsData.guests : []);
         setContacts(Array.isArray(contactsData?.contacts) ? contactsData.contacts : []);
-        if (responsesRes.ok) {
-          setResponses(Array.isArray(responsesData?.responses) ? responsesData.responses : []);
-        } else {
-          setResponses([]);
-        }
+        setResponses(Array.isArray(responsesData?.responses) ? responsesData.responses : []);
 
         const localWorkspace = getEventWorkspace(params.eventId);
         const hasRemoteCampaignContent =
@@ -124,7 +107,7 @@ export default function EventDetailPage() {
             `You're invited to ${eventData?.event?.title || 'our event'}`
         );
       } catch (err) {
-        setError(err instanceof Error ? err.message : 'Failed to load event');
+        setError(getErrorMessage(err, 'Failed to load event'));
       } finally {
         setLoadingPage(false);
       }
@@ -186,27 +169,34 @@ export default function EventDetailPage() {
         reason: 'Save an email draft to this event from AI Studio before sending.',
       };
     }
+    if (!sendSubject.trim()) {
+      return {
+        canSend: false,
+        reason: 'Add an email subject before sending.',
+      };
+    }
     return { canSend: true, reason: '' };
-  }, [campaignKit?.inviteAsset?.src, draftEditorContent]);
+  }, [campaignKit?.inviteAsset?.src, draftEditorContent, sendSubject]);
 
   async function createContact(
     payload: Omit<ContactRecord, 'id' | 'uid' | 'createdAt' | 'updatedAt'>
   ) {
     if (!user) throw new Error('You must be signed in.');
+    const validation = validateContactInput(payload);
+    if (!validation.ok) {
+      throw new Error(validation.message);
+    }
+
     const idToken = await user.getIdToken();
-    const res = await fetch('/api/contacts', {
+    const data = await apiRequest<{ contact: ContactRecord }>('/api/contacts', {
       method: 'POST',
+      idToken,
       headers: {
-        Authorization: `Bearer ${idToken}`,
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify(payload),
+      body: JSON.stringify(validation.value),
     });
-    const data = await res.json();
-    if (!res.ok) {
-      throw new Error(data?.error || 'Failed to create contact');
-    }
-    const created = data.contact as ContactRecord;
+    const created = data.contact;
     setContacts((current) => [created, ...current]);
     return created;
   }
@@ -242,6 +232,9 @@ export default function EventDetailPage() {
     try {
       const idToken = await user.getIdToken();
       const cleanedDraft = sanitizeEmailDraft(draftEditorContent);
+      if (!cleanedDraft) {
+        throw new Error('Add an email draft before saving.');
+      }
       const result = await saveCampaignKitPatch(params.eventId, idToken, {
         emailDraft: {
           content: cleanedDraft,
@@ -254,7 +247,7 @@ export default function EventDetailPage() {
       setDraftEditorContent(cleanedDraft);
       setDraftNotice('Draft saved to this event.');
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to save draft');
+      setError(getErrorMessage(err, 'Failed to save draft'));
     } finally {
       setSavingDraft(false);
     }
@@ -269,6 +262,16 @@ export default function EventDetailPage() {
     try {
       const idToken = await user.getIdToken();
       const cleanedDraft = sanitizeEmailDraft(draftEditorContent);
+      const validation = validateSendSetup({
+        hasInviteAsset: Boolean(campaignKit?.inviteAsset?.src),
+        subject: sendSubject,
+        message: cleanedDraft,
+        contactIds,
+      });
+      if (!validation.ok) {
+        throw new Error(validation.message);
+      }
+
       if (campaignKit?.emailDraft?.content !== cleanedDraft) {
         const saveResult = await saveCampaignKitPatch(params.eventId, idToken, {
           emailDraft: {
@@ -281,18 +284,14 @@ export default function EventDetailPage() {
         setCampaignKit(saveResult.campaignKit);
       }
 
-      const assignRes = await fetch(`/api/events/${params.eventId}/guests`, {
+      const assignData = await apiRequest<{ guests?: GuestRecord[] }>(`/api/events/${params.eventId}/guests`, {
         method: 'POST',
+        idToken,
         headers: {
-          Authorization: `Bearer ${idToken}`,
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({ contactIds }),
       });
-      const assignData = await assignRes.json();
-      if (!assignRes.ok) {
-        throw new Error(assignData?.error || 'Failed to assign recipients');
-      }
 
       const assignedGuests = Array.isArray(assignData?.guests) ? (assignData.guests as GuestRecord[]) : [];
       setGuests((current) => {
@@ -303,10 +302,14 @@ export default function EventDetailPage() {
         return Array.from(byId.values()).sort((a, b) => (a.createdAt || '').localeCompare(b.createdAt || ''));
       });
 
-      const sendRes = await fetch(`/api/events/${params.eventId}/send`, {
+      const sendData = await apiRequest<{
+        event?: EventRecord;
+        sentCount?: number;
+        results?: { guestId?: string; status?: string }[];
+      }>(`/api/events/${params.eventId}/send`, {
         method: 'POST',
+        idToken,
         headers: {
-          Authorization: `Bearer ${idToken}`,
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
@@ -315,10 +318,6 @@ export default function EventDetailPage() {
           guestIds: assignedGuests.map((guest) => guest.id),
         }),
       });
-      const sendData = await sendRes.json();
-      if (!sendRes.ok) {
-        throw new Error(sendData?.error || 'Failed to send invites');
-      }
 
       if (sendData?.event) {
         setEvent(sendData.event as EventRecord);
@@ -337,7 +336,7 @@ export default function EventDetailPage() {
       setSendNotice(`Sent ${sendData?.sentCount || 0} invite emails.`);
       setShowRecipientModal(false);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to send invites');
+      setError(getErrorMessage(err, 'Failed to send invites'));
     } finally {
       setSendingInvites(false);
     }
@@ -352,17 +351,13 @@ export default function EventDetailPage() {
     setError('');
     try {
       const idToken = await user.getIdToken();
-      const res = await fetch(`/api/events/${params.eventId}`, {
+      await apiRequest(`/api/events/${params.eventId}`, {
         method: 'DELETE',
-        headers: { Authorization: `Bearer ${idToken}` },
+        idToken,
       });
-      const data = await res.json();
-      if (!res.ok) {
-        throw new Error(data?.error || 'Failed to delete event');
-      }
       router.push('/events');
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to delete event');
+      setError(getErrorMessage(err, 'Failed to delete event'));
       setDeletingEvent(false);
     }
   }
@@ -794,7 +789,7 @@ export default function EventDetailPage() {
           }))}
           initiallySelectedContactIds={selectedContactIds}
           eventTitle={event.title}
-          busy={sendingInvites}
+          busy={sendingInvites || importingExistingGuests}
           onClose={() => setShowRecipientModal(false)}
           onCreateContact={createContact}
           onImportExistingGuests={importableGuests.length ? importExistingGuestsToGuestBook : undefined}

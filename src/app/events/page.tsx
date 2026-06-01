@@ -7,7 +7,10 @@ import { useRouter } from 'next/navigation';
 import Header from '../components/Header';
 import Footer from '../components/Footer';
 import PageBackButton from '../components/PageBackButton';
+import { apiRequest } from '../lib/apiClient';
+import { getErrorMessage } from '../lib/errors';
 import { useAuth } from '../lib/useAuth';
+import { validateEventDraft } from '../lib/validators';
 import type { EventRecord } from '../lib/eventTypes';
 
 type EventFormState = {
@@ -70,27 +73,13 @@ export default function EventsPage() {
     async function loadEvents() {
       setLoadingEvents(true);
       setError('');
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 15000);
       try {
         const idToken = await currentUser.getIdToken();
-        const res = await fetch('/api/events', {
-          signal: controller.signal,
-          headers: { Authorization: `Bearer ${idToken}` },
-        });
-        const data = await res.json();
-        if (!res.ok) {
-          throw new Error(data?.error || 'Failed to load events');
-        }
+        const data = await apiRequest<{ events?: EventRecord[] }>('/api/events', { idToken });
         setEvents(Array.isArray(data?.events) ? data.events : []);
       } catch (err) {
-        if (err instanceof Error && err.name === 'AbortError') {
-          setError('Loading events timed out. Please refresh or try again in a moment.');
-        } else {
-          setError(err instanceof Error ? err.message : 'Failed to load events');
-        }
+        setError(getErrorMessage(err, 'Failed to load events'));
       } finally {
-        clearTimeout(timeout);
         setLoadingEvents(false);
       }
     }
@@ -113,37 +102,34 @@ export default function EventsPage() {
   async function handleCreateEvent(event: React.FormEvent) {
     event.preventDefault();
     if (!user) return;
+    const validation = validateEventDraft(form);
+    if (!validation.ok) {
+      setError(validation.message);
+      return;
+    }
+
     setSubmitting(true);
     setError('');
     try {
       const idToken = await user.getIdToken();
       const payload = {
-        ...form,
-        title: form.title.trim(),
-        hostName: form.hostName.trim(),
-        description: form.description.trim(),
-        venue: form.venue.trim(),
-        finalInviteUrl: form.finalInviteUrl.trim() || '/wedding.svg',
+        ...validation.value,
         status: 'draft',
       };
-      const res = await fetch('/api/events', {
+      const data = await apiRequest<{ event: EventRecord }>('/api/events', {
         method: 'POST',
+        idToken,
         headers: {
-          Authorization: `Bearer ${idToken}`,
           'Content-Type': 'application/json',
         },
         body: JSON.stringify(payload),
       });
-      const data = await res.json();
-      if (!res.ok) {
-        throw new Error(data?.error || 'Failed to create event');
-      }
-      const created = data?.event as EventRecord;
+      const created = data.event;
       setEvents((current) => [created, ...current]);
       setForm(INITIAL_FORM);
       router.push(`/events/${created.id}`);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to create event');
+      setError(getErrorMessage(err, 'Failed to create event'));
     } finally {
       setSubmitting(false);
     }
@@ -160,17 +146,13 @@ export default function EventsPage() {
     setError('');
     try {
       const idToken = await user.getIdToken();
-      const res = await fetch(`/api/events/${eventId}`, {
+      await apiRequest(`/api/events/${eventId}`, {
         method: 'DELETE',
-        headers: { Authorization: `Bearer ${idToken}` },
+        idToken,
       });
-      const data = await res.json();
-      if (!res.ok) {
-        throw new Error(data?.error || 'Failed to delete event');
-      }
       setEvents((current) => current.filter((entry) => entry.id !== eventId));
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to delete event');
+      setError(getErrorMessage(err, 'Failed to delete event'));
     } finally {
       setDeletingEventId(null);
     }

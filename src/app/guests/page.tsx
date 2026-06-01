@@ -7,7 +7,10 @@ import { useRouter } from 'next/navigation';
 import Footer from '../components/Footer';
 import Header from '../components/Header';
 import PageBackButton from '../components/PageBackButton';
+import { apiRequest } from '../lib/apiClient';
+import { getErrorMessage } from '../lib/errors';
 import { useAuth } from '../lib/useAuth';
+import { parsePositiveInt, validateContactInput } from '../lib/validators';
 import type { ContactRecord } from '../lib/eventTypes';
 
 type ContactFormState = {
@@ -52,14 +55,10 @@ export default function GuestsPage() {
       setError('');
       try {
         const idToken = await user.getIdToken();
-        const res = await fetch('/api/contacts', {
-          headers: { Authorization: `Bearer ${idToken}` },
-        });
-        const data = await res.json();
-        if (!res.ok) throw new Error(data?.error || 'Failed to load contacts');
+        const data = await apiRequest<{ contacts?: ContactRecord[] }>('/api/contacts', { idToken });
         setContacts(Array.isArray(data?.contacts) ? data.contacts : []);
       } catch (err) {
-        setError(err instanceof Error ? err.message : 'Failed to load contacts');
+        setError(getErrorMessage(err, 'Failed to load contacts'));
       } finally {
         setLoadingContacts(false);
       }
@@ -80,31 +79,35 @@ export default function GuestsPage() {
   async function handleCreateContact(event: React.FormEvent) {
     event.preventDefault();
     if (!user) return;
+    const validation = validateContactInput({
+      name: form.name,
+      email: form.email,
+      phone: form.phone,
+      category: form.category,
+      notes: form.notes,
+      defaultGuestCount: parsePositiveInt(form.defaultGuestCount),
+    });
+    if (!validation.ok) {
+      setError(validation.message);
+      return;
+    }
+
     setSubmitting(true);
     setError('');
     try {
       const idToken = await user.getIdToken();
-      const res = await fetch('/api/contacts', {
+      const data = await apiRequest<{ contact: ContactRecord }>('/api/contacts', {
         method: 'POST',
+        idToken,
         headers: {
-          Authorization: `Bearer ${idToken}`,
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({
-          name: form.name.trim(),
-          email: form.email.trim(),
-          phone: form.phone.trim(),
-          category: form.category,
-          notes: form.notes.trim(),
-          defaultGuestCount: Number(form.defaultGuestCount || '1') || 1,
-        }),
+        body: JSON.stringify(validation.value),
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data?.error || 'Failed to create contact');
-      setContacts((current) => [data.contact as ContactRecord, ...current]);
+      setContacts((current) => [data.contact, ...current]);
       setForm(INITIAL_FORM);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to create contact');
+      setError(getErrorMessage(err, 'Failed to create contact'));
     } finally {
       setSubmitting(false);
     }
@@ -118,15 +121,13 @@ export default function GuestsPage() {
     setError('');
     try {
       const idToken = await user.getIdToken();
-      const res = await fetch(`/api/contacts/${contactId}`, {
+      await apiRequest(`/api/contacts/${contactId}`, {
         method: 'DELETE',
-        headers: { Authorization: `Bearer ${idToken}` },
+        idToken,
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data?.error || 'Failed to delete contact');
       setContacts((current) => current.filter((contact) => contact.id !== contactId));
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to delete contact');
+      setError(getErrorMessage(err, 'Failed to delete contact'));
     } finally {
       setDeletingContactId(null);
     }
