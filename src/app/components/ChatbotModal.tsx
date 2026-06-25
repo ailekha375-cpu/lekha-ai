@@ -169,6 +169,8 @@ function ImageMessage({
       className="block w-full max-w-full max-h-64 overflow-hidden rounded-lg text-left focus:outline-none focus:ring-2 focus:ring-[#d2b48c] focus:ring-offset-1"
       title="Open template actions"
     >
+      {/* Dynamic base64/remote AI-generated image — next/image optimization does not apply */}
+      {/* eslint-disable-next-line @next/next/no-img-element */}
       <img
         src={src}
         alt="Generated design"
@@ -299,6 +301,8 @@ export default function ChatbotModal({ asPage = false }: ChatbotModalProps) {
       setSelectedEventId(null);
       saveChatToStorage([], [WELCOME_MESSAGE], null);
     }
+    // loadSessions/loadEvents intentionally omitted — this effect re-runs only on auth/modal state
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [showChatModal, asPage, user, authLoading]);
 
   const loadSessions = async () => {

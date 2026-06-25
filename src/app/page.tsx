@@ -1,59 +1,29 @@
 'use client';
 
+import Image from 'next/image';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
+import { motion } from 'framer-motion';
 
 import Footer from './components/Footer';
 import Header from './components/Header';
+import InviteCard from './components/InviteCard';
+import TemplateGallery from './components/TemplateGallery';
+import { heroInvite, heroBackInvite, heroFanInvite, heroThumbs } from './lib/inviteSamples';
 import { useAuth } from './lib/useAuth';
 import { useModal } from './components/ModalContext';
 
 const workflowSteps = [
-  {
-    step: '01',
-    title: 'Generate a template',
-    body: 'Describe the event vibe in AI Studio and get a design template back, even while placeholder mode is active.',
-  },
-  {
-    step: '02',
-    title: 'Customize the invite',
-    body: 'Open the invite composer, drag text into place, style the copy, and export a polished final invitation.',
-  },
-  {
-    step: '03',
-    title: 'Save everything to an event',
-    body: 'Attach the image, email draft, and linked AI chats to one event so your campaign stays organized.',
-  },
-  {
-    step: '04',
-    title: 'Invite guests and track RSVPs',
-    body: 'Add guests, generate personal RSVP links, and prepare the event for sending and response tracking.',
-  },
+  { step: '01', title: 'Describe it', body: 'Tell the AI about your event.' },
+  { step: '02', title: 'AI designs', body: 'Get invitation artwork back.' },
+  { step: '03', title: 'Make it yours', body: 'Drop in names and details.' },
+  { step: '04', title: 'Send & track', body: 'Share links, watch RSVPs arrive.' },
 ];
 
-const featureCards = [
-  {
-    eyebrow: 'AI Studio',
-    title: 'Prompt, preview, and refine invite concepts',
-    body: 'Use one chat space to generate visual directions, draft invitation copy, and save the pieces that belong to an event.',
-    href: '/chat',
-    cta: 'Open AI Studio',
-  },
-  {
-    eyebrow: 'Event Hub',
-    title: 'Turn creative output into a send-ready event kit',
-    body: 'Each event becomes the home for invite art, email text, guest records, and RSVP links.',
-    href: '/events',
-    cta: 'Open Event Hub',
-  },
-];
-
-const capabilityList = [
-  'AI prompt flow for invite concepts and copy',
-  'Template actions for download, editing, and event save',
-  'Invitation text editor with exportable PNG output',
-  'Event dashboard with guests and RSVP links',
-  'Campaign kit with saved image, saved email draft, and linked chats',
+const guestRows = [
+  { name: 'Olivia Bennett', status: 'Attending' },
+  { name: 'Liam Carter', status: 'Pending' },
+  { name: 'Sophia Müller', status: 'Attending' },
 ];
 
 export default function Home() {
@@ -74,178 +44,256 @@ export default function Home() {
       <main className="min-h-screen">
         <Header />
 
-        <section className="px-4 pb-14 pt-6 sm:px-6 lg:px-8 lg:pt-10">
-          <div className="mx-auto grid max-w-7xl gap-8 lg:grid-cols-[1.05fr_0.95fr]">
-            <div className="rounded-[36px] border border-[#eadfd2] bg-[#fcfaf7] p-7 shadow-[0_24px_80px_rgba(45,24,16,0.10)] sm:p-10">
-              <p className="text-xs font-semibold uppercase tracking-[0.28em] text-[#9a7a56]">
-                Invitation workflow, end to end
+        <section className="px-4 pb-16 pt-8 sm:px-6 lg:px-8 lg:pt-14">
+          <div className="mx-auto grid max-w-6xl items-center gap-8 lg:grid-cols-2">
+            <div className="flex flex-col justify-center">
+              <p className="flex items-center gap-3 text-xs font-semibold uppercase tracking-[0.28em] text-[#9a7a56]">
+                <span className="h-px w-8 bg-[linear-gradient(90deg,#c9a36a,transparent)]" aria-hidden />
+                AI invitations &amp; RSVPs
               </p>
-              <h1 className="mt-4 max-w-3xl text-5xl font-semibold leading-[1.05] text-[#2d1810] sm:text-6xl">
-                Design the invite, save the campaign, then send and track RSVPs from one place.
+              <h1
+                className="mt-5 max-w-2xl text-5xl leading-[1.08] tracking-normal text-[#2d1810] sm:text-6xl lg:text-7xl"
+                style={{ fontFamily: 'Kaivalya, serif' }}
+              >
+                Every celebration starts here.
               </h1>
-              <p className="mt-6 max-w-2xl text-base leading-8 text-[#6b5b4f] sm:text-lg">
-                Lekha is no longer just a template generator. It is becoming your event workspace: create invite art, add text, save email drafts, attach them to an event, and prep the whole thing for guest delivery.
+              <p className="mt-6 max-w-md text-lg leading-8 text-[#6b5b4f]">
+                Describe your event - AI designs the invite. Send it, then track every reply.
               </p>
 
-              <div className="mt-8 flex flex-wrap gap-3">
+              <div className="mt-8 flex flex-wrap items-center gap-5">
                 <button
                   type="button"
                   onClick={openPrimaryFlow}
-                  className="rounded-full bg-[#2d1810] px-6 py-3 text-sm font-semibold text-white transition hover:bg-[#4a2e1d]"
+                  className="rounded-full bg-[#2d1810] px-7 py-3.5 text-sm font-semibold text-white transition hover:bg-[#4a2e1d]"
                 >
                   Start with AI
                 </button>
-                <Link
-                  href="/events"
-                  className="rounded-full border border-[#ddcfbe] bg-white px-6 py-3 text-sm font-semibold text-[#2d1810] transition hover:bg-[#f7efe4]"
+                <a
+                  href="#templates"
+                  className="text-sm font-semibold text-[#6b5b4f] underline-offset-4 transition hover:text-[#2d1810] hover:underline"
                 >
-                  Open Event Hub
-                </Link>
+                  Browse templates →
+                </a>
               </div>
 
-              <div className="mt-8 grid gap-4 sm:grid-cols-3">
-                <div className="rounded-[24px] bg-[#f7efe4] px-5 py-4">
-                  <p className="text-2xl font-semibold text-[#2d1810]">AI</p>
-                  <p className="mt-2 text-sm leading-6 text-[#6b5b4f]">Generate invite concepts and invitation email copy in one chat flow.</p>
+              <div className="mt-10 flex items-center gap-4">
+                <div className="flex">
+                  {heroThumbs.map((s, i) => (
+                    <div
+                      key={s.id}
+                      className={`relative h-12 w-9 overflow-hidden rounded-lg border-2 border-[#f6f1ea] shadow-sm ${i > 0 ? '-ml-3' : ''}`}
+                    >
+                      <Image src={s.src} alt="" fill sizes="40px" className="object-cover" />
+                    </div>
+                  ))}
                 </div>
-                <div className="rounded-[24px] bg-[#fff5e8] px-5 py-4">
-                  <p className="text-2xl font-semibold text-[#2d1810]">Event</p>
-                  <p className="mt-2 text-sm leading-6 text-[#6b5b4f]">Save the final image, email draft, and linked chats into an event campaign kit.</p>
-                </div>
-                <div className="rounded-[24px] bg-[#eef5eb] px-5 py-4">
-                  <p className="text-2xl font-semibold text-[#2d1810]">RSVP</p>
-                  <p className="mt-2 text-sm leading-6 text-[#6b5b4f]">Generate guest links today and extend this into full delivery next.</p>
-                </div>
+                <p className="text-sm leading-6 text-[#6b5b4f]">
+                  Designed by AI for weddings, birthdays,
+                  <br className="hidden sm:block" /> brunches &amp; every celebration.
+                </p>
               </div>
             </div>
 
-            <div className="rounded-[36px] border border-[#eadfd2] bg-[linear-gradient(180deg,#fffdf9,#f7efe4)] p-6 shadow-[0_24px_80px_rgba(45,24,16,0.08)]">
-              <div className="rounded-[28px] border border-[#eadfd2] bg-[#fffdf9] p-5 shadow-sm">
-                <div className="flex items-center justify-between gap-3">
-                  <div>
-                    <p className="text-xs font-semibold uppercase tracking-[0.24em] text-[#9a7a56]">Live product map</p>
-                    <h2 className="mt-3 text-3xl font-semibold text-[#2d1810]">What one event contains</h2>
-                  </div>
-                  <span className="rounded-full bg-[#f5ecdf] px-3 py-2 text-xs font-semibold uppercase tracking-[0.18em] text-[#855d3b]">
-                    Current build
-                  </span>
-                </div>
-
-                <div className="mt-6 space-y-4">
-                  <div className="rounded-[24px] border border-[#eadfd2] bg-[#fffaf4] p-4">
-                    <p className="text-sm font-semibold text-[#4f3422]">Campaign kit</p>
-                    <div className="mt-4 grid gap-4 sm:grid-cols-[120px_1fr]">
-                      <div
-                        className="aspect-[3/4] rounded-[20px] border border-[#eadfd2] bg-cover bg-center"
-                        style={{ backgroundImage: "url('/wedding.svg')" }}
-                      />
-                      <div className="space-y-2 text-sm leading-6 text-[#6b5b4f]">
-                        <p>Saved invite image</p>
-                        <p>Email draft from AI chat</p>
-                        <p>Linked conversations that created those assets</p>
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="rounded-[24px] border border-[#eadfd2] bg-[#fffaf4] p-4">
-                    <p className="text-sm font-semibold text-[#4f3422]">Guest operations</p>
-                    <div className="mt-4 grid gap-3">
-                      <div className="rounded-[18px] bg-white px-4 py-3 text-sm text-[#5b4635]">Manual guest add flow</div>
-                      <div className="rounded-[18px] bg-white px-4 py-3 text-sm text-[#5b4635]">Personal RSVP links per guest</div>
-                      <div className="rounded-[18px] bg-white px-4 py-3 text-sm text-[#5b4635]">Status-ready layout for sending later</div>
-                    </div>
-                  </div>
-
-                  <div className="rounded-[24px] border border-[#eadfd2] bg-[#fffaf4] p-4">
-                    <p className="text-sm font-semibold text-[#4f3422]">Next shipping step</p>
-                    <p className="mt-3 text-sm leading-6 text-[#6b5b4f]">
-                      Add event-based email sending so the saved image and saved copy can go out directly from the event workspace.
-                    </p>
-                  </div>
-                </div>
+            <div className="relative mx-auto flex aspect-[1.15/1] w-full max-w-[480px] items-center justify-center">
+              <div className="pointer-events-none absolute inset-0" aria-hidden>
+                <div className="absolute left-[4%] top-[6%] h-44 w-44 rounded-full bg-[#e7c9a0]/55 blur-3xl" />
+                <div className="absolute bottom-[4%] right-[4%] h-52 w-52 rounded-full bg-[#e4c2d6]/45 blur-3xl" />
+                <div className="absolute left-1/2 top-1/2 h-44 w-44 -translate-x-1/2 -translate-y-1/2 rounded-full bg-[#f4ddae]/55 blur-3xl" />
               </div>
+
+              <motion.svg
+                className="absolute right-[6%] top-[2%] h-6 w-6"
+                viewBox="0 0 24 24"
+                aria-hidden
+                animate={{ opacity: [0.3, 1, 0.3], scale: [0.85, 1, 0.85] }}
+                transition={{ repeat: Infinity, duration: 3.2, ease: 'easeInOut' }}
+              >
+                <path d="M12 2l1.8 6.2L20 10l-6.2 1.8L12 18l-1.8-6.2L4 10l6.2-1.8z" fill="#cda35f" />
+              </motion.svg>
+              <motion.svg
+                className="absolute bottom-[12%] left-[2%] h-4 w-4"
+                viewBox="0 0 24 24"
+                aria-hidden
+                animate={{ opacity: [0.2, 0.9, 0.2], scale: [0.8, 1, 0.8] }}
+                transition={{ repeat: Infinity, duration: 4, ease: 'easeInOut', delay: 1 }}
+              >
+                <path d="M12 2l1.8 6.2L20 10l-6.2 1.8L12 18l-1.8-6.2L4 10l6.2-1.8z" fill="#cda35f" />
+              </motion.svg>
+
+              <motion.div
+                initial={{ opacity: 0, y: 22, rotate: -12 }}
+                animate={{ opacity: 1, y: 0, rotate: -10 }}
+                transition={{ duration: 0.7, ease: 'easeOut', delay: 0.08 }}
+                className="absolute left-0 top-[6%] hidden w-[44%] sm:block"
+                aria-hidden
+              >
+                <motion.div animate={{ y: [0, -10, 0] }} transition={{ repeat: Infinity, duration: 6, ease: 'easeInOut' }}>
+                  <InviteCard sample={heroBackInvite} />
+                </motion.div>
+              </motion.div>
+              <motion.div
+                initial={{ opacity: 0, y: 22, rotate: 12 }}
+                animate={{ opacity: 1, y: 0, rotate: 10 }}
+                transition={{ duration: 0.7, ease: 'easeOut', delay: 0.16 }}
+                className="absolute bottom-[4%] right-0 hidden w-[44%] sm:block"
+                aria-hidden
+              >
+                <motion.div animate={{ y: [0, 9, 0] }} transition={{ repeat: Infinity, duration: 7, ease: 'easeInOut', delay: 0.5 }}>
+                  <InviteCard sample={heroFanInvite} />
+                </motion.div>
+              </motion.div>
+              <motion.div
+                initial={{ opacity: 0, y: 28, rotate: 2 }}
+                animate={{ opacity: 1, y: 0, rotate: 1 }}
+                transition={{ duration: 0.7, ease: 'easeOut' }}
+                whileHover={{ rotate: 0, y: -6 }}
+                className="relative z-10 w-[60%] max-w-[280px]"
+              >
+                <motion.div animate={{ y: [0, -8, 0] }} transition={{ repeat: Infinity, duration: 5.5, ease: 'easeInOut' }}>
+                  <InviteCard sample={heroInvite} priority />
+                </motion.div>
+              </motion.div>
             </div>
           </div>
         </section>
 
-        <section className="px-4 py-8 sm:px-6 lg:px-8">
+        <section id="templates" className="scroll-mt-24 px-4 py-8 sm:px-6 lg:px-8">
           <div className="mx-auto max-w-7xl">
-            <div className="mb-8">
-              <p className="text-xs font-semibold uppercase tracking-[0.28em] text-[#9a7a56]">Workflow</p>
-              <h2 className="mt-3 text-4xl font-semibold text-[#2d1810]">How the product should feel</h2>
+            <div className="mb-8 text-center">
+              <p className="text-xs font-semibold uppercase tracking-[0.28em] text-[#9a7a56]">Template gallery</p>
+              <h2 className="mt-3 text-4xl font-semibold text-[#2d1810]">Every style is designed by AI</h2>
+              <p className="mx-auto mt-4 max-w-xl text-base leading-7 text-[#6b5b4f]">
+                Pick a look, add your details. Real outputs, placeholder text.
+              </p>
+            </div>
+            <TemplateGallery />
+          </div>
+        </section>
+
+        <section id="how" className="scroll-mt-24 px-4 py-8 sm:px-6 lg:px-8">
+          <div className="mx-auto max-w-7xl">
+            <div className="mb-8 text-center">
+              <p className="text-xs font-semibold uppercase tracking-[0.28em] text-[#9a7a56]">How it works</p>
+              <h2 className="mt-3 text-4xl font-semibold text-[#2d1810]">From idea to RSVP in four steps</h2>
             </div>
 
-            <div className="grid gap-4 lg:grid-cols-4">
-              {workflowSteps.map((item) => (
-                <div
-                  key={item.step}
-                  className="rounded-[28px] border border-[#eadfd2] bg-[#fffdf9] p-5 shadow-[0_18px_50px_rgba(45,24,16,0.06)]"
-                >
-                  <p className="text-xs font-semibold uppercase tracking-[0.24em] text-[#9a7a56]">{item.step}</p>
-                  <h3 className="mt-4 text-2xl font-semibold text-[#2d1810]">{item.title}</h3>
-                  <p className="mt-4 text-sm leading-7 text-[#6b5b4f]">{item.body}</p>
+            <div className="grid gap-10 sm:grid-cols-2 lg:grid-cols-4 lg:gap-6">
+              {workflowSteps.map((item, i) => (
+                <div key={item.step} className="relative flex flex-col items-center text-center">
+                  {i < workflowSteps.length - 1 && (
+                    <div
+                      className="pointer-events-none absolute left-1/2 top-7 hidden h-px w-[calc(100%+1.5rem)] bg-[#e7dccd] lg:block"
+                      aria-hidden
+                    />
+                  )}
+                  <div className="relative z-10 flex h-14 w-14 items-center justify-center rounded-full border border-[#e7dccd] bg-[#fcfaf7] text-sm font-semibold tracking-[0.1em] text-[#9a7a56]">
+                    {item.step}
+                  </div>
+                  <h3 className="mt-5 text-xl font-semibold text-[#2d1810]">{item.title}</h3>
+                  <p className="mt-2 max-w-[15rem] text-sm leading-6 text-[#6b5b4f]">{item.body}</p>
                 </div>
               ))}
             </div>
           </div>
         </section>
 
-        <section className="px-4 py-8 sm:px-6 lg:px-8">
-          <div className="mx-auto grid max-w-7xl gap-6 lg:grid-cols-2">
-            {featureCards.map((card) => (
-              <div
-                key={card.title}
-                className="rounded-[32px] border border-[#eadfd2] bg-[#fffdf9] p-6 shadow-[0_18px_55px_rgba(45,24,16,0.07)]"
-              >
-                <p className="text-xs font-semibold uppercase tracking-[0.24em] text-[#9a7a56]">{card.eyebrow}</p>
-                <h3 className="mt-3 text-3xl font-semibold text-[#2d1810]">{card.title}</h3>
-                <p className="mt-4 text-sm leading-7 text-[#6b5b4f]">{card.body}</p>
+        <section className="px-4 py-12 sm:px-6 lg:px-8">
+          <div className="mx-auto max-w-7xl space-y-16 lg:space-y-24">
+            <div className="grid items-center gap-10 lg:grid-cols-2">
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-[0.28em] text-[#9a7a56]">AI Studio</p>
+                <h3 className="mt-3 text-4xl font-semibold text-[#2d1810]">Design invites with AI</h3>
+                <p className="mt-4 max-w-md text-base leading-7 text-[#6b5b4f]">
+                  Describe the occasion in plain words. Lekha designs the artwork and writes the wording in one chat then saves it straight to your event.
+                </p>
                 <Link
-                  href={card.href}
-                  className="mt-6 inline-flex rounded-full bg-[#2d1810] px-5 py-3 text-sm font-semibold text-white transition hover:bg-[#4a2e1d]"
+                  href="/chat"
+                  className="mt-6 inline-flex items-center gap-1 text-sm font-semibold text-[#2d1810] underline-offset-4 transition hover:underline"
                 >
-                  {card.cta}
+                  Open AI Studio →
                 </Link>
               </div>
-            ))}
+
+              <div className="rounded-[28px] bg-[#fcf7ef] p-6 sm:p-8">
+                <div className="ml-auto max-w-[80%] rounded-2xl rounded-tr-sm bg-[#2d1810] px-4 py-3 text-sm leading-6 text-[#f6ead0]">
+                  Design a rustic autumn wedding invite for Emma &amp; James.
+                </div>
+                <div className="mt-3 max-w-[85%] rounded-2xl rounded-tl-sm bg-white px-4 py-3 text-sm leading-6 text-[#5b4635] shadow-sm">
+                  Here are a few directions - pick one to refine.
+                </div>
+                <div className="mt-4 flex gap-3">
+                  {heroThumbs.slice(0, 3).map((s) => (
+                    <div key={s.id} className="relative h-28 w-20 overflow-hidden rounded-xl border border-[#eadfd2] shadow-sm">
+                      <Image src={s.src} alt="" fill sizes="80px" className="object-cover" />
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            <div className="grid items-center gap-10 lg:grid-cols-2">
+              <div className="lg:order-2">
+                <p className="text-xs font-semibold uppercase tracking-[0.28em] text-[#9a7a56]">Event Hub</p>
+                <h3 className="mt-3 text-4xl font-semibold text-[#2d1810]">Run the whole event</h3>
+                <p className="mt-4 max-w-md text-base leading-7 text-[#6b5b4f]">
+                  Keep the invite, your guest list, and every RSVP in one place with a personal link for each guest and live reply tracking.
+                </p>
+                <Link
+                  href="/events"
+                  className="mt-6 inline-flex items-center gap-1 text-sm font-semibold text-[#2d1810] underline-offset-4 transition hover:underline"
+                >
+                  Open Event Hub →
+                </Link>
+              </div>
+
+              <div className="rounded-[28px] bg-[#fcf7ef] p-6 sm:p-8 lg:order-1">
+                <div className="rounded-2xl bg-white p-5 shadow-sm">
+                  <div className="flex items-center justify-between">
+                    <p className="text-sm font-semibold text-[#2d1810]">Emma &amp; James · Guests</p>
+                    <span className="rounded-full bg-[#eef5eb] px-3 py-1 text-xs font-semibold text-[#4f7a43]">18 attending</span>
+                  </div>
+                  <div className="mt-4 space-y-2">
+                    {guestRows.map((g) => (
+                      <div key={g.name} className="flex items-center justify-between rounded-xl bg-[#faf6f0] px-4 py-3">
+                        <span className="text-sm text-[#5b4635]">{g.name}</span>
+                        <span
+                          className={`rounded-full px-3 py-1 text-xs font-semibold ${
+                            g.status === 'Attending' ? 'bg-[#eef5eb] text-[#4f7a43]' : 'bg-[#f5ecdf] text-[#9a7a56]'
+                          }`}
+                        >
+                          {g.status}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            </div>
           </div>
         </section>
 
         <section className="px-4 pb-16 pt-8 sm:px-6 lg:px-8">
-          <div className="mx-auto grid max-w-7xl gap-8 lg:grid-cols-[0.9fr_1.1fr]">
-            <div className="rounded-[32px] border border-[#eadfd2] bg-[#fff9f1] p-6 shadow-[0_20px_60px_rgba(45,24,16,0.08)]">
-              <p className="text-xs font-semibold uppercase tracking-[0.24em] text-[#9a7a56]">Current capabilities</p>
-              <h2 className="mt-3 text-3xl font-semibold text-[#2d1810]">What is already in the app</h2>
-              <div className="mt-6 space-y-3">
-                {capabilityList.map((item) => (
-                  <div key={item} className="rounded-[20px] bg-white px-4 py-3 text-sm font-medium text-[#5b4635]">
-                    {item}
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            <div className="rounded-[32px] border border-[#eadfd2] bg-[#fffdf9] p-6 shadow-[0_20px_60px_rgba(45,24,16,0.08)]">
-              <p className="text-xs font-semibold uppercase tracking-[0.24em] text-[#9a7a56]">Best next action</p>
-              <h2 className="mt-3 text-3xl font-semibold text-[#2d1810]">Start an event, then build the campaign around it</h2>
-              <p className="mt-4 text-sm leading-7 text-[#6b5b4f]">
-                The strongest workflow now is: create an event first, open the AI Studio from that event, then save the invite art and email copy back into the same event workspace.
-              </p>
-              <div className="mt-6 flex flex-wrap gap-3">
-                <button
-                  type="button"
-                  onClick={openPrimaryFlow}
-                  className="rounded-full bg-[#2d1810] px-6 py-3 text-sm font-semibold text-white transition hover:bg-[#4a2e1d]"
-                >
-                  Open AI Studio
-                </button>
-                <Link
-                  href="/events"
-                  className="rounded-full border border-[#ddcfbe] bg-[#fffaf4] px-6 py-3 text-sm font-semibold text-[#2d1810] transition hover:bg-[#f7efe4]"
-                >
-                  Create or open an event
-                </Link>
-              </div>
+          <div className="mx-auto max-w-4xl rounded-[36px] border border-[#eadfd2] bg-[#fff9f1] p-10 text-center shadow-[0_20px_60px_rgba(45,24,16,0.08)] sm:p-14">
+            <p className="text-xs font-semibold uppercase tracking-[0.28em] text-[#9a7a56]">Ready when you are</p>
+            <h2 className="mt-3 text-4xl font-semibold text-[#2d1810]">Make your first invitation tonight</h2>
+            <p className="mx-auto mt-4 max-w-md text-base leading-7 text-[#6b5b4f]">
+              Describe the occasion and see a design in seconds.
+            </p>
+            <div className="mt-8 flex flex-wrap justify-center gap-4">
+              <button
+                type="button"
+                onClick={openPrimaryFlow}
+                className="rounded-full bg-[#2d1810] px-7 py-3 text-sm font-semibold text-white transition hover:bg-[#4a2e1d]"
+              >
+                Start with AI
+              </button>
+              <Link
+                href="/events"
+                className="rounded-full border border-[#ddcfbe] bg-white px-7 py-3 text-sm font-semibold text-[#2d1810] transition hover:bg-[#f7efe4]"
+              >
+                Create an event
+              </Link>
             </div>
           </div>
         </section>
